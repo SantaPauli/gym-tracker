@@ -670,7 +670,7 @@ function renderPlan() {
 
   const slider = document.getElementById('slider');
   const chipRow = document.getElementById('chips');
-  const step = () => slider.firstElementChild.getBoundingClientRect().width + 12;
+  const step = () => slider.firstElementChild.getBoundingClientRect().width + (parseFloat(getComputedStyle(slider).columnGap) || 0);
   const showChip = (i, smooth) => {
     const c = chipRow.children[i];
     chipRow.scrollTo({ left: c.offsetLeft - 16, behavior: smooth ? 'smooth' : 'auto' });

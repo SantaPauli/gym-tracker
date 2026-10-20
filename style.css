@@ -79,17 +79,17 @@ svg.i {
 
 /* ---------- Workout-Karten (horizontal wischbar) ---------- */
 .slider {
-  display: flex; gap: 12px; overflow-x: auto; scroll-snap-type: x mandatory;
-  align-items: flex-start; scrollbar-width: none; margin: 0 -16px; padding: 0 16px;
-  scroll-padding: 0 16px;
+  display: flex; gap: 10px; overflow-x: auto; scroll-snap-type: x mandatory;
+  align-items: flex-start; scrollbar-width: none; margin: 0 -16px; padding: 0 20px;
+  scroll-padding: 0 20px;
 }
 .slider::-webkit-scrollbar { display: none; }
-/* 88 % statt 100 %: die nächste Karte schaut rein -> man sieht, dass man wischen kann */
+/* Karte mittig mit 20 px Rand; bei 10 px Abstand schauen links/rechts 10 px der Nachbarkarten rein
+   (wie im Original) -> man sieht, dass man wischen kann */
 .wcard {
-  flex: 0 0 88%; scroll-snap-align: start;
+  flex: 0 0 100%; scroll-snap-align: center;
   background: #141414; border: 1px solid var(--border); border-radius: var(--r-l); padding: 18px;
 }
-.wcard:only-child { flex-basis: 100%; }
 
 .badge {
   display: inline-flex; align-items: center; gap: 6px;
