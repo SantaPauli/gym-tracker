@@ -614,7 +614,7 @@ function renderPlan() {
     const date = last ? `<span class="card-date">${fmtDate(last.start)}</span>` : '';
     const dur = last ? fmtDuration(new Date(last.end) - new Date(last.start)) : '–';
     return `
-      <section class="wcard">
+      <section class="wcard${i === state.nextIndex ? ' next' : ''}">
         <div class="card-top">${badge}${date}</div>
         <h2>${esc(w.name)}</h2>
         <div class="stats">
