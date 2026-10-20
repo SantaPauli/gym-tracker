@@ -1181,10 +1181,18 @@ function renderData() {
       <button class="btn secondary" id="plan-reset" ${planIsDefault() ? 'disabled' : ''}>${icon('reset')}Plan zurücksetzen</button>
     </div>
     <div class="panel">
+      <h3>App-Version <span class="muted" id="app-version"></span></h3>
+      <p>Neue Versionen werden automatisch geladen. Falls nicht: hier aktualisieren. Deine Trainings bleiben erhalten.</p>
+      <button class="btn secondary" id="force-update">${icon('reset')}App aktualisieren</button>
+    </div>
+    <div class="panel">
       <h3>Alles löschen</h3>
       <p>Löscht alle gespeicherten Trainings auf diesem Gerät.</p>
       <button class="btn danger" id="reset">${icon('trash')}Alle Trainings löschen</button>
     </div>`;
+
+  appVersion().then(v => { const el = document.getElementById('app-version'); if (el) el.textContent = 'v' + v; });
+  document.getElementById('force-update').addEventListener('click', forceUpdate);
 
   document.getElementById('next-sel').addEventListener('change', e => {
     state.nextIndex = +e.target.value;
@@ -1235,6 +1243,37 @@ function renderData() {
 // ---------- Start ----------
 render();
 
+// Updates: Beim Öffnen und beim Zurückholen der App nach einer neuen Version fragen.
+// Übernimmt eine neue Version, lädt die App einmal neu (Daten liegen im Speicher, auch ein laufendes Training).
 if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+  const hadController = !!navigator.serviceWorker.controller;
+  let reloaded = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!hadController || reloaded) return;
+    reloaded = true;
+    location.reload();
+  });
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(reg => {
+      document.addEventListener('visibilitychange', () => { if (!document.hidden) reg.update().catch(() => {}); });
+    }).catch(() => {});
+  });
+}
+
+async function appVersion() {
+  try {
+    const key = (await caches.keys()).find(k => /^gym-tracker-v\d+$/.test(k));
+    return key ? key.replace('gym-tracker-v', '') : '?';
+  } catch (e) { return '?'; }
+}
+
+// Notfall: Offline-Speicher der App leeren und frisch laden (Trainingsdaten bleiben erhalten).
+async function forceUpdate() {
+  try {
+    const regs = navigator.serviceWorker ? await navigator.serviceWorker.getRegistrations() : [];
+    await Promise.all(regs.map(r => r.unregister()));
+    const keys = await caches.keys();
+    await Promise.all(keys.filter(k => k.startsWith('gym-tracker-')).map(k => caches.delete(k)));
+  } catch (e) { /* trotzdem neu laden */ }
+  location.reload();
 }

@@ -1,5 +1,5 @@
 // Offline-Cache. Bei Änderungen an der App die Versionsnummer erhöhen.
-const CACHE = 'gym-tracker-v7';
+const CACHE = 'gym-tracker-v8';
 const ICS_CACHE = 'gym-ics'; // von app.js befüllt, siehe openIcsOnIos()
 const FILES = [
   './',
@@ -14,7 +14,11 @@ const FILES = [
 ];
 
 self.addEventListener('install', e => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES)).then(() => self.skipWaiting()));
+  // cache: 'reload' umgeht den Browser-Zwischenspeicher (GitHub Pages: 10 Min.),
+  // sonst landen beim Update womöglich die alten Dateien im neuen Cache.
+  e.waitUntil(caches.open(CACHE)
+    .then(c => c.addAll(FILES.map(f => new Request(f, { cache: 'reload' }))))
+    .then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', e => {
@@ -41,7 +45,7 @@ self.addEventListener('fetch', e => {
   }
   e.respondWith(caches.open(CACHE).then(async cache => {
     const cached = await cache.match(req, { ignoreSearch: true });
-    const network = fetch(req)
+    const network = fetch(req.url, { cache: 'no-cache', credentials: 'same-origin' })
       .then(res => {
         if (res.ok) cache.put(req, res.clone());
         return res;
