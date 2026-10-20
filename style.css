@@ -62,20 +62,19 @@ svg.i {
   fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
 }
 
-/* ---------- Plan: Trainings-Auswahl ---------- */
-.chips-row {
-  display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none;
-  margin: 0 -16px 14px; padding: 0 16px;
+/* ---------- Plan: Kopfzeile mit Trainings 1–5 ---------- */
+.plan-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 10px 0 16px; }
+.plan-head h1 { margin: 0; font-size: clamp(20px, 6.6vw, 28px); white-space: nowrap; }
+.tabs { display: flex; gap: 5px; flex-shrink: 0; }
+.tab {
+  width: 30px; height: 30px; padding: 0; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--card2); color: var(--text-2); font-weight: 700; font-size: 16px;
 }
-.chips-row::-webkit-scrollbar { display: none; }
-.chip {
-  flex: 0 0 auto; display: inline-flex; align-items: center; gap: 6px;
-  min-height: var(--tap); padding: 8px 16px; border-radius: var(--r-full);
-  background: var(--card2); color: var(--text); font-weight: 600; font-size: 15px; white-space: nowrap;
-}
-.chip svg.i { color: var(--accent); stroke-width: 2.6; }
-.chip.active { background: var(--accent); color: #000; }
-.chip.active svg.i { color: #000; }
+.tab svg.i { width: 18px; height: 18px; stroke-width: 2.8; }
+.tab.done { background: var(--accent-dark); color: #fff; }
+.tab.active { background: #9a9a9e; color: #000; }
+.tab.done.active { background: var(--accent); color: #000; }
 
 /* ---------- Workout-Karten (horizontal wischbar) ---------- */
 .slider {
@@ -120,12 +119,23 @@ svg.i {
 .wcard.next .stat,
 .wcard:has(.badge.next) .stat { background: var(--accent-bg); }
 
-.stats { display: flex; gap: 8px; margin-bottom: 6px; }
-.stat {
-  flex: 1; background: var(--card); border-radius: 14px; padding: 10px 6px;
-  text-align: center; font-weight: 600; font-size: 17px; font-variant-numeric: tabular-nums;
+/* Dauer + Sätze links, Körperfigur rechts (wie im Original) */
+.card-main { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: center; margin-bottom: 4px; }
+.stat-col { display: flex; flex-direction: column; gap: 12px; }
+.stat-pill {
+  display: flex; align-items: center; gap: 10px; min-height: 50px; padding: 0 14px;
+  background: var(--card); border-radius: var(--r-m); font-weight: 600; font-size: 17px; font-variant-numeric: tabular-nums;
 }
-.stat small { display: block; color: var(--muted); font-weight: 500; font-size: 13px; margin-bottom: 3px; }
+.stat-pill svg.i { width: 22px; height: 22px; color: var(--muted); }
+.stat-pill span { flex: 1; text-align: center; }
+.wcard.next .stat-pill, .wcard:has(.badge.next) .stat-pill { background: var(--accent-bg); }
+.body { display: flex; justify-content: center; gap: 4px; }
+.body svg { width: 50%; max-width: 76px; height: auto; }
+.body svg > * { fill: #3a3a3c; stroke: #141414; stroke-width: 1; }
+.body svg > .on { fill: var(--accent); }
+.add-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+.add-row .muted { font-size: 15px; }
+.ex-line .sep { margin: 0 9px; color: var(--muted); }
 
 /* Nebenaktion: dezent, nur das Icon im Akzent */
 .add-line {

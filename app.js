@@ -619,16 +619,85 @@ function exerciseLine(workout, ex) {
     reps = range(last.map(s => s.reps).filter(v => v !== null), String) || reps;
     kg = range(last.map(s => s.kg).filter(v => v !== null), fmtNum) || kg;
   }
-  return `${setsLabel(ex.sets)} · ${esc(reps)} Wdh. · ${esc(kg)} kg`;
+  return `${setsLabel(ex.sets)}<span class="sep">•</span>${esc(reps)} Wdh.<span class="sep">•</span>${esc(kg)} kg`;
+}
+
+// ---------- Körperfigur mit trainierten Muskeln ----------
+// Welche Muskeln eine Übung trifft, anhand von Stichworten im Namen.
+const MUSCLE_RULES = [
+  [/butterfly-reverse|reverse|face-pull|vorgebeugt/, ['rear', 'traps']],
+  [/bankdrück|schrägbank(?!.*curl)|butterfly|brust|liegestütz|dips/, ['chest', 'shoulders', 'triceps']],
+  [/seitheben|schulterdrück|frontheben/, ['shoulders']],
+  [/rudern|latzieh|klimmz|pull-?down/, ['lats', 'traps', 'biceps']],
+  [/shrug/, ['traps']],
+  [/trizeps|triceps/, ['triceps']],
+  [/bizeps|curl/, ['biceps', 'forearms']],
+  [/kreuzheben|deadlift/, ['hamstrings', 'glutes', 'lowerback']],
+  [/hüftstreck|hip|glute/, ['glutes', 'hamstrings']],
+  [/hyperextension|rückenstreck/, ['lowerback', 'glutes']],
+  [/beinbeug|leg ?curl/, ['hamstrings']],
+  [/wade|calf/, ['calves']],
+  [/beinpresse|squat|kniebeug|ausfall|beinstreck/, ['quads', 'glutes']],
+  [/crunch|beinheb|bauch|plank|sit-?up/, ['abs']],
+];
+
+function workoutMuscles(workout) {
+  const set = new Set();
+  for (const ex of workout.exercises) {
+    const n = ex.name.toLowerCase();
+    const rule = MUSCLE_RULES.find(([re]) => re.test(n));
+    if (rule) rule[1].forEach(m => set.add(m));
+  }
+  return set;
+}
+
+// Vereinfachte Figur (vorn/hinten); Teile mit data-m werden eingefärbt, wenn trainiert.
+const BODY_BASE = `
+  <circle cx="50" cy="15" r="10"/><rect x="45" y="24" width="10" height="8" rx="3"/>
+  <ellipse cx="17" cy="111" rx="4" ry="6"/><ellipse cx="83" cy="111" rx="4" ry="6"/>`;
+const BODY_FRONT = BODY_BASE + `
+  <ellipse data-m="shoulders" cx="30" cy="42" rx="8" ry="7"/><ellipse data-m="shoulders" cx="70" cy="42" rx="8" ry="7"/>
+  <ellipse data-m="chest" cx="41" cy="48" rx="10" ry="8"/><ellipse data-m="chest" cx="59" cy="48" rx="10" ry="8"/>
+  <ellipse data-m="biceps" cx="25" cy="63" rx="5" ry="11"/><ellipse data-m="biceps" cx="75" cy="63" rx="5" ry="11"/>
+  <ellipse data-m="forearms" cx="20" cy="88" rx="4.5" ry="13"/><ellipse data-m="forearms" cx="80" cy="88" rx="4.5" ry="13"/>
+  <rect data-m="abs" x="41" y="58" width="18" height="38" rx="6"/>
+  <path data-m="abs" d="M32 60 l7 2 v32 l-6 -4 z M68 60 l-7 2 v32 l6 -4 z"/>
+  <rect x="38" y="97" width="24" height="12" rx="5"/>
+  <ellipse data-m="quads" cx="42" cy="132" rx="8" ry="22"/><ellipse data-m="quads" cx="58" cy="132" rx="8" ry="22"/>
+  <ellipse data-m="calves" cx="42" cy="175" rx="5" ry="15"/><ellipse data-m="calves" cx="58" cy="175" rx="5" ry="15"/>`;
+const BODY_BACK = BODY_BASE + `
+  <path data-m="traps" d="M38 34 L50 30 L62 34 L56 46 L50 52 L44 46 Z"/>
+  <ellipse data-m="rear" cx="30" cy="42" rx="8" ry="7"/><ellipse data-m="rear" cx="70" cy="42" rx="8" ry="7"/>
+  <ellipse data-m="triceps" cx="25" cy="63" rx="5" ry="11"/><ellipse data-m="triceps" cx="75" cy="63" rx="5" ry="11"/>
+  <ellipse data-m="forearms" cx="20" cy="88" rx="4.5" ry="13"/><ellipse data-m="forearms" cx="80" cy="88" rx="4.5" ry="13"/>
+  <path data-m="lats" d="M37 48 Q32 62 40 82 L48 80 L48 52 Z M63 48 Q68 62 60 82 L52 80 L52 52 Z"/>
+  <rect data-m="lowerback" x="42" y="80" width="16" height="16" rx="5"/>
+  <ellipse data-m="glutes" cx="43" cy="106" rx="8" ry="9"/><ellipse data-m="glutes" cx="57" cy="106" rx="8" ry="9"/>
+  <ellipse data-m="hamstrings" cx="42" cy="136" rx="7.5" ry="18"/><ellipse data-m="hamstrings" cx="58" cy="136" rx="7.5" ry="18"/>
+  <ellipse data-m="calves" cx="42" cy="172" rx="6" ry="14"/><ellipse data-m="calves" cx="58" cy="172" rx="6" ry="14"/>`;
+
+function bodyFigures(muscles) {
+  const paint = svg => svg.replace(/data-m="(\w+)"/g, (m, k) => `${m}${muscles.has(k) || (k === 'rear' && muscles.has('shoulders')) ? ' class="on"' : ''}`);
+  return `<div class="body" aria-hidden="true">
+    <svg viewBox="0 0 100 192">${paint(BODY_FRONT)}</svg>
+    <svg viewBox="0 0 100 192">${paint(BODY_BACK)}</svg>
+  </div>`;
+}
+
+// Geschätzte Dauer, solange es noch kein eigenes Training gibt (~3,5 Min. pro Satz).
+function workoutDuration(w) {
+  const last = lastSessionOf(w.id);
+  if (last) return fmtDuration(new Date(last.end) - new Date(last.start));
+  return fmtDuration(totalSets(w) * 3.5 * 60000);
 }
 
 function renderPlan() {
   if (!validIndex(planIndex)) planIndex = 0;
 
-  const chips = plan.map((w, i) => {
+  const tabs = plan.map((w, i) => {
     const recent = doneRecently(w.id);
-    return `<button class="chip ${i === planIndex ? 'active' : ''} ${recent ? 'done' : ''}" data-tab="${i}">
-      ${recent ? icon('check') : ''}${esc(w.name)}</button>`;
+    return `<button class="tab ${i === planIndex ? 'active' : ''} ${recent ? 'done' : ''}" data-tab="${i}" aria-label="${esc(w.name)}">
+      ${recent ? icon('check') : i + 1}</button>`;
   }).join('');
 
   const cards = plan.map((w, i) => {
@@ -637,17 +706,21 @@ function renderPlan() {
     if (i === state.nextIndex) badge = '<span class="badge next">Nächstes Training</span>';
     else if (doneRecently(w.id)) badge = '<span class="badge done">Abgeschlossen</span>';
     const date = last ? `<span class="card-date">${fmtDate(last.start)}</span>` : '';
-    const dur = last ? fmtDuration(new Date(last.end) - new Date(last.start)) : '–';
     return `
       <section class="wcard${i === state.nextIndex ? ' next' : ''}">
         <div class="card-top">${badge}${date}</div>
         <h2>${esc(w.name)}</h2>
-        <div class="stats">
-          <div class="stat"><small>Zuletzt</small>${dur}</div>
-          <div class="stat"><small>Sätze</small>${totalSets(w)}</div>
-          <div class="stat"><small>Übungen</small>${w.exercises.length}</div>
+        <div class="card-main">
+          <div class="stat-col">
+            <div class="stat-pill">${icon('clock')}<span>${workoutDuration(w)}</span></div>
+            <div class="stat-pill">${icon('dumbbell')}<span>${setsLabel(totalSets(w))}</span></div>
+          </div>
+          ${bodyFigures(workoutMuscles(w))}
         </div>
-        <button class="add-line" data-add="${i}">${icon('plus')}Übung hinzufügen</button>
+        <div class="add-row">
+          <button class="add-line" data-add="${i}">${icon('plus')}Übung hinzufügen</button>
+          <span class="muted">${w.exercises.length} ${w.exercises.length === 1 ? 'Übung' : 'Übungen'}</span>
+        </div>
         ${w.exercises.length ? w.exercises.map((ex, j) => `
           <div class="ex">
             <div class="ex-head">
@@ -663,34 +736,24 @@ function renderPlan() {
   }).join('');
 
   app.innerHTML = `
-    <h1>Trainingsplan</h1>
-    <div class="chips-row" id="chips">${chips}</div>
+    <div class="plan-head"><h1>Trainingsplan</h1><div class="tabs" id="tabs">${tabs}</div></div>
     <div class="slider" id="slider">${cards}</div>
-    <button class="btn float" id="start">${esc(plan[planIndex].name)} starten</button>`;
+    <button class="btn float" id="start">Training starten</button>`;
 
   const slider = document.getElementById('slider');
-  const chipRow = document.getElementById('chips');
+  const tabRow = document.getElementById('tabs');
   const step = () => slider.firstElementChild.getBoundingClientRect().width + (parseFloat(getComputedStyle(slider).columnGap) || 0);
-  const showChip = (i, smooth) => {
-    const c = chipRow.children[i];
-    chipRow.scrollTo({ left: c.offsetLeft - 16, behavior: smooth ? 'smooth' : 'auto' });
-  };
-  requestAnimationFrame(() => {
-    slider.scrollLeft = planIndex * step();
-    showChip(planIndex, false);
-  });
+  requestAnimationFrame(() => { slider.scrollLeft = planIndex * step(); });
 
   slider.addEventListener('scroll', () => {
     const i = Math.min(plan.length - 1, Math.max(0, Math.round(slider.scrollLeft / step())));
     if (i !== planIndex) {
       planIndex = i;
-      [...chipRow.children].forEach((c, j) => c.classList.toggle('active', j === i));
-      showChip(i, true);
-      document.getElementById('start').textContent = `${plan[i].name} starten`;
+      [...tabRow.children].forEach((c, j) => c.classList.toggle('active', j === i));
     }
   }, { passive: true });
 
-  chipRow.querySelectorAll('[data-tab]').forEach(t => t.addEventListener('click', () => {
+  tabRow.querySelectorAll('[data-tab]').forEach(t => t.addEventListener('click', () => {
     slider.scrollTo({ left: +t.dataset.tab * step(), behavior: 'smooth' });
   }));
 
