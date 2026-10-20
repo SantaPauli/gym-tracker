@@ -623,64 +623,114 @@ function exerciseLine(workout, ex) {
 }
 
 // ---------- Körperfigur mit trainierten Muskeln ----------
-// Welche Muskeln eine Übung trifft, anhand von Stichworten im Namen.
+// Welche Muskeln eine Übung trifft (Haupt- und mitarbeitende Muskeln), anhand von
+// Stichworten im Namen. Die erste passende Regel zählt, daher Spezielles zuerst.
 const MUSCLE_RULES = [
-  [/butterfly-reverse|reverse|face-pull|vorgebeugt/, ['rear', 'traps']],
-  [/bankdrück|schrägbank(?!.*curl)|butterfly|brust|liegestütz|dips/, ['chest', 'shoulders', 'triceps']],
-  [/seitheben|schulterdrück|frontheben/, ['shoulders']],
-  [/rudern|latzieh|klimmz|pull-?down/, ['lats', 'traps', 'biceps']],
-  [/shrug/, ['traps']],
-  [/trizeps|triceps/, ['triceps']],
-  [/bizeps|curl/, ['biceps', 'forearms']],
-  [/kreuzheben|deadlift/, ['hamstrings', 'glutes', 'lowerback']],
-  [/hüftstreck|hip|glute/, ['glutes', 'hamstrings']],
-  [/hyperextension|rückenstreck/, ['lowerback', 'glutes']],
-  [/beinbeug|leg ?curl/, ['hamstrings']],
-  [/wade|calf/, ['calves']],
-  [/beinpresse|squat|kniebeug|ausfall|beinstreck/, ['quads', 'glutes']],
-  [/crunch|beinheb|bauch|plank|sit-?up/, ['abs']],
+  [/butterfly-reverse|reverse fly|face-?pull|vorgebeugt/, ['delt_rear', 'traps_mid', 'upperback'], ['traps_upper']],
+  [/schrägbankdrück/, ['chest_upper', 'delt_front'], ['chest_lower', 'triceps']],
+  [/bankdrück|brustpresse|liegestütz/, ['chest_upper', 'chest_lower'], ['delt_front', 'triceps']],
+  [/butterfly|fliegende/, ['chest_upper', 'chest_lower'], ['delt_front']],
+  [/seitheben/, ['delt_side'], ['traps_upper']],
+  [/schulterdrück|frontheben|military/, ['delt_front', 'delt_side'], ['triceps']],
+  [/latzieh|klimmz|pull-?down/, ['lats'], ['biceps', 'upperback', 'delt_rear']],
+  [/rudern.*breit|breit.*rudern/, ['upperback', 'traps_mid', 'delt_rear'], ['lats', 'biceps']],
+  [/rudern/, ['lats', 'traps_mid'], ['biceps', 'delt_rear', 'upperback']],
+  [/shrug/, ['traps_upper'], ['forearms']],
+  [/trizeps|triceps|dips/, ['triceps'], []],
+  [/hammer/, ['forearms', 'biceps'], []],
+  [/bizeps|curl(?!.*bein)/, ['biceps'], ['forearms']],
+  [/kreuzheben|deadlift/, ['hamstrings', 'glutes'], ['lowerback', 'forearms']],
+  [/hüftstreck|hip ?thrust|glute/, ['glutes'], ['hamstrings']],
+  [/hyperextension|rückenstreck/, ['lowerback'], ['glutes', 'hamstrings']],
+  [/beinbeug|leg ?curl/, ['hamstrings'], ['calves']],
+  [/wade|calf/, ['calves'], []],
+  [/beinstreck|leg ?extension/, ['quads'], []],
+  [/beinpresse|squat|kniebeug|ausfall/, ['quads', 'glutes'], ['adductors', 'hamstrings']],
+  [/adduktor/, ['adductors'], []],
+  [/beinheb|leg ?raise/, ['abs_lower', 'hipflex'], ['abs', 'obliques']],
+  [/crunch|bauch|sit-?up/, ['abs', 'abs_lower'], ['obliques']],
+  [/plank|unterarmstütz/, ['abs'], ['obliques', 'lowerback']],
+  [/oblique|russian|seitbeug/, ['obliques'], ['abs']],
 ];
 
 function workoutMuscles(workout) {
-  const set = new Set();
+  const primary = new Set(), secondary = new Set();
   for (const ex of workout.exercises) {
-    const n = ex.name.toLowerCase();
-    const rule = MUSCLE_RULES.find(([re]) => re.test(n));
-    if (rule) rule[1].forEach(m => set.add(m));
+    const rule = MUSCLE_RULES.find(([re]) => re.test(ex.name.toLowerCase()));
+    if (!rule) continue;
+    rule[1].forEach(m => primary.add(m));
+    rule[2].forEach(m => secondary.add(m));
   }
-  return set;
+  primary.forEach(m => secondary.delete(m));
+  return { primary, secondary };
 }
 
-// Vereinfachte Figur (vorn/hinten); Teile mit data-m werden eingefärbt, wenn trainiert.
-const BODY_BASE = `
-  <circle cx="50" cy="15" r="10"/><rect x="45" y="24" width="10" height="8" rx="3"/>
-  <ellipse cx="17" cy="111" rx="4" ry="6"/><ellipse cx="83" cy="111" rx="4" ry="6"/>`;
-const BODY_FRONT = BODY_BASE + `
-  <ellipse data-m="shoulders" cx="30" cy="42" rx="8" ry="7"/><ellipse data-m="shoulders" cx="70" cy="42" rx="8" ry="7"/>
-  <ellipse data-m="chest" cx="41" cy="48" rx="10" ry="8"/><ellipse data-m="chest" cx="59" cy="48" rx="10" ry="8"/>
-  <ellipse data-m="biceps" cx="25" cy="63" rx="5" ry="11"/><ellipse data-m="biceps" cx="75" cy="63" rx="5" ry="11"/>
-  <ellipse data-m="forearms" cx="20" cy="88" rx="4.5" ry="13"/><ellipse data-m="forearms" cx="80" cy="88" rx="4.5" ry="13"/>
-  <rect data-m="abs" x="41" y="58" width="18" height="38" rx="6"/>
-  <path data-m="abs" d="M32 60 l7 2 v32 l-6 -4 z M68 60 l-7 2 v32 l6 -4 z"/>
-  <rect x="38" y="97" width="24" height="12" rx="5"/>
-  <ellipse data-m="quads" cx="42" cy="132" rx="8" ry="22"/><ellipse data-m="quads" cx="58" cy="132" rx="8" ry="22"/>
-  <ellipse data-m="calves" cx="42" cy="175" rx="5" ry="15"/><ellipse data-m="calves" cx="58" cy="175" rx="5" ry="15"/>`;
-const BODY_BACK = BODY_BASE + `
-  <path data-m="traps" d="M38 34 L50 30 L62 34 L56 46 L50 52 L44 46 Z"/>
-  <ellipse data-m="rear" cx="30" cy="42" rx="8" ry="7"/><ellipse data-m="rear" cx="70" cy="42" rx="8" ry="7"/>
-  <ellipse data-m="triceps" cx="25" cy="63" rx="5" ry="11"/><ellipse data-m="triceps" cx="75" cy="63" rx="5" ry="11"/>
-  <ellipse data-m="forearms" cx="20" cy="88" rx="4.5" ry="13"/><ellipse data-m="forearms" cx="80" cy="88" rx="4.5" ry="13"/>
-  <path data-m="lats" d="M37 48 Q32 62 40 82 L48 80 L48 52 Z M63 48 Q68 62 60 82 L52 80 L52 52 Z"/>
-  <rect data-m="lowerback" x="42" y="80" width="16" height="16" rx="5"/>
-  <ellipse data-m="glutes" cx="43" cy="106" rx="8" ry="9"/><ellipse data-m="glutes" cx="57" cy="106" rx="8" ry="9"/>
-  <ellipse data-m="hamstrings" cx="42" cy="136" rx="7.5" ry="18"/><ellipse data-m="hamstrings" cx="58" cy="136" rx="7.5" ry="18"/>
-  <ellipse data-m="calves" cx="42" cy="172" rx="6" ry="14"/><ellipse data-m="calves" cx="58" cy="172" rx="6" ry="14"/>`;
+// Vereinfachte Anatomie (vorn/hinten). Gezeichnet wird die linke Körperhälfte,
+// die rechte ist gespiegelt. Je Teil: [Muskel oder null, SVG-Pfad].
+// Linke Körperhälfte (wird gespiegelt), Mitte separat. [muskel|null, pfad]
+const FRONT_CENTER = [
+  [null, 'M50 4 C44 4 41.5 9 42 15 C42.5 21 45.5 25 50 25 C54.5 25 57.5 21 58 15 C58.5 9 56 4 50 4 Z'],
+  [null, 'M45.5 23 L54.5 23 L55.5 31 L44.5 31 Z'],
+];
+const FRONT_HALF = [
+  ['traps_upper', 'M45 27 Q40 31 34 33 L41 34 Q44 32 45.5 31 Z'],
+  ['delt_side', 'M34 33 Q25 33 22.5 41 Q21.5 47 23 53 L26 52 Q25.5 44 30.5 37 Z'],
+  ['delt_front', 'M34 33 L30.5 37 Q25.5 44 26 52 L30 49 Q32 42 38.5 35.5 Z'],
+  ['chest_upper', 'M38.5 35.5 Q44 33.5 49.5 34.5 L49.5 42 Q42 41 33.5 45 Q34.5 39 38.5 35.5 Z'],
+  ['chest_lower', 'M33.5 45 Q42 41 49.5 42 L49.5 51 Q43 55.5 37 53 Q32.5 50.5 33.5 45 Z'],
+  ['biceps', 'M26.5 53.5 Q23 60 23.8 67.5 Q25.5 71.5 29 70 Q31.2 62 30.2 50.5 Z'],
+  ['forearms', 'M24 72 Q20 80 18.8 91 Q20 94.5 23.2 93.5 Q27.5 84 29.2 72 Q26.5 73.5 24 72 Z'],
+  [null, 'M17 95 Q15.5 101 17.5 105 Q20.5 106.5 22.5 103 Q23.5 98 22.8 95 Z'],
+  ['abs', 'M43.5 55.5 L49.5 55 L49.5 62 L43.5 62.5 Z'],
+  ['abs', 'M43.5 63.5 L49.5 63 L49.5 70 L43.5 70.5 Z'],
+  ['abs_lower', 'M43.5 71.5 L49.5 71 L49.5 78.5 L43.5 79 Z'],
+  ['abs_lower', 'M43.5 80 L49.5 79.5 L49.5 93 Q46 90 43.5 86 Z'],
+  ['obliques', 'M37 54.5 Q40.5 56 42.5 56.5 L42.5 85 Q38.5 81 36 75 Q34.8 64 37 54.5 Z'],
+  ['hipflex', 'M36 76.5 Q38.5 83 42.5 87 Q46 92 49 96 L49 99 Q43 98 39.5 95 Q35.5 89 35 82 Z'],
+  ['quads', 'M35 85 Q31 100 31 118 Q31.5 135 35 146 L38.2 145 Q36.2 124 37.6 104 Q36 95 35 85 Z'],
+  ['quads', 'M38.6 101 Q42 99.5 45 103.5 Q45.2 125 42.2 146 L38.6 145 Q36.8 124 38.6 101 Z'],
+  ['quads', 'M45.4 106 Q47.5 118 47.2 130 Q46.8 141 44 147.5 L42.6 146.5 Q45.6 126 45.4 106 Z'],
+  ['adductors', 'M46 102 Q48.5 101 49.3 101.5 L49.3 117 Q48.6 124 47.4 128 Q47.4 114 46 102 Z'],
+  [null, 'M36.5 148 Q41 146 45 148.5 Q45 153.5 41 154.5 Q37 154 36.5 148 Z'],
+  ['tibialis', 'M37 156 Q35 170 36.8 189 L39.6 189 Q39.6 171 40.6 156.5 Q38.8 155.5 37 156 Z'],
+  ['calves', 'M41.2 156.5 Q45.4 164 44.6 177 Q43.6 186 40.6 189 Q40.2 171 41.2 156.5 Z'],
+  [null, 'M36 191 Q35 195.5 37.5 197 L44 197 Q45 194 41.5 191 Z'],
+];
+const BACK_CENTER = FRONT_CENTER;
+const BACK_HALF = [
+  ['traps_upper', 'M45.5 24 L50 23.5 L50 40 Q43 35.5 34 33.5 Q41.5 31 45.5 24 Z'],
+  ['traps_mid', 'M50 40.5 L50 61 Q46 55 42.5 47.5 Q40 42 37 38 Q44 37 50 40.5 Z'],
+  ['delt_side', 'M34 33.5 Q25 33 22.5 41 Q21.6 46 22.6 51.5 L25 50 Q25 43 28.5 38 Z'],
+  ['delt_rear', 'M34 33.5 L28.5 38 Q25 43 25 50 L27.6 51.5 Q30 43.5 36.6 37.6 Z'],
+  ['upperback', 'M36.8 38.6 Q40.5 43 43.6 51.5 L35.8 52 Q31.6 48 30.2 44 Q32.5 40 36.8 38.6 Z'],
+  ['lats', 'M30 45 Q31 51.5 35.8 53 L43.8 52.6 L44.6 60.5 Q44 71 43 79.5 Q38.6 78 36 72 Q31.6 60 30 45 Z'],
+  ['lowerback', 'M45.2 60.5 L49.6 63.5 L49.6 90 L44.2 90 Q43.6 75 45.2 60.5 Z'],
+  ['triceps', 'M22.8 52.8 Q20.8 61 22.8 69.6 Q25.8 72 29 69.2 Q30.2 60 27.4 52 Z'],
+  ['forearms', 'M24 72 Q20 80 18.8 91 Q20 94.5 23.2 93.5 Q27.5 84 29.2 72 Q26.5 73.5 24 72 Z'],
+  [null, 'M17 95 Q15.5 101 17.5 105 Q20.5 106.5 22.5 103 Q23.5 98 22.8 95 Z'],
+  ['obliques', 'M36.2 73.5 Q38.6 79.5 43.2 81 L43.2 88 Q37.6 86.5 35.4 81 Z'],
+  ['glutes', 'M35.4 82.5 Q38.4 88 43.4 89.4 Q38.6 90.4 35.2 93 Q33.8 87.5 35.4 82.5 Z'],
+  ['glutes', 'M35.4 94 Q42 89 49.6 91.5 L49.6 108 Q44 112.5 38.2 110.4 Q34.2 104 35.4 94 Z'],
+  ['hamstrings', 'M34.4 111 Q32 126 34 143 L39 144.5 Q38 126 40 112.5 Q37 112.6 34.4 111 Z'],
+  ['hamstrings', 'M40.6 112.6 Q45 113.4 48.4 110.6 Q48.4 128 45.2 144.5 L39.6 144.5 Q38.6 126 40.6 112.6 Z'],
+  ['adductors', 'M48.8 110 L49.6 109.6 L49.6 126 Q49 120 48.8 110 Z'],
+  [null, 'M35.6 146.5 Q40.5 145 45.4 147 Q45.4 151.5 40.6 152.5 Q36 152 35.6 146.5 Z'],
+  ['calves', 'M35.4 154 Q32.4 163 34 173 Q37 177.5 40 173.5 Q40.2 162 40.2 154 Q37.6 153 35.4 154 Z'],
+  ['calves', 'M40.8 154 Q46 158 46.2 167 Q45.6 175 40.6 173.5 Q40.8 162 40.8 154 Z'],
+  ['calves', 'M35.8 175.5 Q39 179.5 44.6 175.5 Q43.2 184 42 189 L39 189 Q37 182.5 35.8 175.5 Z'],
+  [null, 'M36 191 Q35 195.5 37.5 197 L44 197 Q45 194 41.5 191 Z'],
+];
+
+function bodyFigure(center, half, { primary, secondary }) {
+  const cls = m => !m ? '' : primary.has(m) ? ' class="on"' : secondary.has(m) ? ' class="on2"' : '';
+  const draw = list => list.map(([m, d]) => `<path${cls(m)} d="${d}"/>`).join('');
+  const halfSvg = draw(half);
+  return `<svg viewBox="12 2 76 197">${draw(center)}${halfSvg}<g transform="translate(100 0) scale(-1 1)">${halfSvg}</g></svg>`;
+}
 
 function bodyFigures(muscles) {
-  const paint = svg => svg.replace(/data-m="(\w+)"/g, (m, k) => `${m}${muscles.has(k) || (k === 'rear' && muscles.has('shoulders')) ? ' class="on"' : ''}`);
   return `<div class="body" aria-hidden="true">
-    <svg viewBox="0 0 100 192">${paint(BODY_FRONT)}</svg>
-    <svg viewBox="0 0 100 192">${paint(BODY_BACK)}</svg>
+    ${bodyFigure(FRONT_CENTER, FRONT_HALF, muscles)}${bodyFigure(BACK_CENTER, BACK_HALF, muscles)}
   </div>`;
 }
 

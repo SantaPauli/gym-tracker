@@ -129,10 +129,12 @@ svg.i {
 .stat-pill svg.i { width: 22px; height: 22px; color: var(--muted); }
 .stat-pill span { flex: 1; text-align: center; }
 .wcard.next .stat-pill, .wcard:has(.badge.next) .stat-pill { background: var(--accent-bg); }
-.body { display: flex; justify-content: center; gap: 4px; }
-.body svg { width: 50%; max-width: 76px; height: auto; }
-.body svg > * { fill: #3a3a3c; stroke: #141414; stroke-width: 1; }
-.body svg > .on { fill: var(--accent); }
+.body { display: flex; justify-content: center; gap: 6px; }
+.body svg { height: 172px; width: auto; max-width: 50%; }
+.body path { fill: #3a3a3c; stroke: #141414; stroke-width: .7; stroke-linejoin: round; }
+.body path.on { fill: var(--accent); }                       /* Hauptmuskel */
+.body path.on2 { fill: var(--accent); fill-opacity: .4; }    /* arbeitet mit */
+.wcard.next .body path, .wcard:has(.badge.next) .body path { stroke: #0e1f21; }
 .add-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
 .add-row .muted { font-size: 15px; }
 .ex-line .sep { margin: 0 9px; color: var(--muted); }
