@@ -1,9 +1,26 @@
 'use strict';
 
 // ---------- Speicher ----------
-// Alles liegt lokal im Browser (localStorage). Backup über "Daten" → Export
-// oder automatisch über das Kalender-Abo (GitHub-Gist, siehe unten).
+// Alles liegt lokal im Browser (localStorage). Backup über "Daten" → Export.
 const STORE_KEY = 'gymtracker.v1';
+const PLAN_KEY = 'gymtracker.plan';
+
+// Reste der zurückgestellten Kalender-Abo-Funktion (enthielt einen Token) entfernen.
+try { localStorage.removeItem('gymtracker.sync'); } catch (e) { /* ignorieren */ }
+
+function readJson(key) {
+  try { return JSON.parse(localStorage.getItem(key)); } catch (e) { return null; }
+}
+
+function writeJson(key, value) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+    return true;
+  } catch (e) {
+    toast('Speichern fehlgeschlagen – Speicher voll oder privater Modus. Bitte ein Backup machen.');
+    return false;
+  }
+}
 
 function validDate(v) {
   return typeof v === 'string' && !Number.isNaN(new Date(v).getTime());
@@ -13,6 +30,55 @@ function numOrNull(v) {
   return typeof v === 'number' && Number.isFinite(v) ? v : null;
 }
 
+function clampInt(v, lo, hi, fallback) {
+  const n = parseInt(v, 10);
+  return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : fallback;
+}
+
+// ---------- Trainingsplan ----------
+// plan.js liefert den Original-Plan (PLAN). Änderungen in der App werden als
+// eigener Plan gespeichert; "Daten → Plan zurücksetzen" stellt das Original wieder her.
+function cleanPlanExercise(e) {
+  return {
+    name: String(e.name).trim(),
+    equip: String(e.equip || ''),
+    sets: clampInt(e.sets, 1, 20, 3),
+    reps: String(e.reps || '10'),
+    kg: String(e.kg || '-'),
+  };
+}
+
+function cleanPlan(p) {
+  if (!Array.isArray(p)) return null;
+  const out = p
+    .filter(w => w && typeof w.id === 'string' && Array.isArray(w.exercises))
+    .map(w => ({
+      id: w.id,
+      name: String(w.name || w.id),
+      exercises: w.exercises.filter(e => e && typeof e.name === 'string' && e.name.trim()).map(cleanPlanExercise),
+    }));
+  return out.length ? out : null;
+}
+
+function defaultPlan() {
+  return JSON.parse(JSON.stringify(PLAN));
+}
+
+let plan = cleanPlan(readJson(PLAN_KEY)) || defaultPlan();
+
+function savePlan() {
+  writeJson(PLAN_KEY, plan);
+}
+
+function planIsDefault() {
+  return JSON.stringify(plan) === JSON.stringify(cleanPlan(PLAN));
+}
+
+function validIndex(i) {
+  return Number.isInteger(i) && i >= 0 && i < plan.length;
+}
+
+// ---------- Trainingsdaten ----------
 // Prüft eine gespeicherte/importierte Trainingseinheit; null, wenn unbrauchbar.
 function cleanSession(s) {
   if (!s || typeof s.id !== 'string' || !validDate(s.start) || !Array.isArray(s.exercises)) return null;
@@ -32,36 +98,23 @@ function cleanSession(s) {
   };
 }
 
-function validIndex(i) {
-  return Number.isInteger(i) && i >= 0 && i < PLAN.length;
-}
-
 function load() {
-  try {
-    const s = JSON.parse(localStorage.getItem(STORE_KEY));
-    if (s && Array.isArray(s.sessions)) {
-      const active = s.active && Array.isArray(s.active.exercises) && validDate(s.active.start) ? s.active : null;
-      return {
-        sessions: s.sessions.map(cleanSession).filter(Boolean),
-        active,
-        nextIndex: validIndex(s.nextIndex) ? s.nextIndex : 0,
-      };
-    }
-  } catch (e) { /* kaputte Daten → neu anfangen */ }
+  const s = readJson(STORE_KEY);
+  if (s && Array.isArray(s.sessions)) {
+    const active = s.active && Array.isArray(s.active.exercises) && validDate(s.active.start) ? s.active : null;
+    return {
+      sessions: s.sessions.map(cleanSession).filter(Boolean),
+      active,
+      nextIndex: validIndex(s.nextIndex) ? s.nextIndex : 0,
+    };
+  }
   return { sessions: [], active: null, nextIndex: 0 };
 }
 
 let state = load();
-let saveWarned = false;
 
 function save() {
-  try {
-    localStorage.setItem(STORE_KEY, JSON.stringify(state));
-    saveWarned = false;
-  } catch (e) {
-    if (!saveWarned) alert('Speichern fehlgeschlagen (Speicher voll oder privater Modus). Bitte ein Backup machen.');
-    saveWarned = true;
-  }
+  writeJson(STORE_KEY, state);
 }
 
 if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
@@ -129,6 +182,16 @@ function range(values, fmt) {
   return lo === hi ? fmt(lo) : `${fmt(lo)}-${fmt(hi)}`;
 }
 
+function moveItem(arr, i, delta) {
+  const j = i + delta;
+  if (j < 0 || j >= arr.length) return;
+  [arr[i], arr[j]] = [arr[j], arr[i]];
+}
+
+function setsLabel(n) {
+  return `${n} ${n === 1 ? 'Satz' : 'Sätze'}`;
+}
+
 function totalSets(workout) {
   return workout.exercises.reduce((n, e) => n + e.sets, 0);
 }
@@ -163,6 +226,229 @@ function doneRecently(workoutId) {
   return s && (Date.now() - new Date(s.start)) < 7 * 24 * 3600 * 1000 ? s : null;
 }
 
+// ---------- Icons ----------
+const ICONS = {
+  dumbbell: '<path d="M6.5 6.5v11M17.5 6.5v11M3.5 9.5v5M20.5 9.5v5M6.5 12h11"/>',
+  calendar: '<rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/>',
+  data: '<ellipse cx="12" cy="6" rx="7.5" ry="2.8"/><path d="M4.5 6v6c0 1.5 3.4 2.8 7.5 2.8s7.5-1.3 7.5-2.8V6M4.5 12v6c0 1.5 3.4 2.8 7.5 2.8s7.5-1.3 7.5-2.8v-6"/>',
+  more: '<circle cx="5.5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="18.5" cy="12" r="1.2"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  minus: '<path d="M5 12h14"/>',
+  check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
+  edit: '<path d="M4 20h4L19 9l-4-4L4 16v4zM13.5 6.5l4 4"/>',
+  up: '<path d="M12 19V5M6 11l6-6 6 6"/>',
+  down: '<path d="M12 5v14M6 13l6 6 6-6"/>',
+  trash: '<path d="M4 7h16M9.5 7V4.5h5V7M6.5 7l1 13h9l1-13M10 11v5.5M14 11v5.5"/>',
+  download: '<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>',
+  upload: '<path d="M12 15V4M7 9l5-5 5 5M5 20h14"/>',
+  clock: '<circle cx="12" cy="13" r="7.5"/><path d="M12 9.5V13l2.5 1.8M9.5 2.5h5"/>',
+  reset: '<path d="M4 12a8 8 0 1 0 2.4-5.7M4 4v4.5h4.5"/>',
+};
+
+function icon(name) {
+  return `<svg class="i" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name]}</svg>`;
+}
+
+// ---------- Hinweise (Toast) ----------
+let toastHandle = null;
+
+function toast(msg) {
+  const t = document.getElementById('toast');
+  if (!t) return;
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toastHandle);
+  toastHandle = setTimeout(() => t.classList.remove('show'), 2800);
+}
+
+// ---------- Modal / Bottom-Sheet ----------
+const modalEl = document.getElementById('modal');
+const modalBox = document.getElementById('modal-box');
+let modalCloseHook = null;
+
+function openModal(html, onClose) {
+  modalBox.innerHTML = html;
+  modalCloseHook = onClose || null;
+  modalEl.classList.remove('hidden');
+  modalBox.scrollTop = 0;
+}
+
+function closeModal() {
+  modalEl.classList.add('hidden');
+  const hook = modalCloseHook;
+  modalCloseHook = null;
+  if (hook) hook();
+}
+
+modalEl.addEventListener('click', e => {
+  if (e.target === modalEl) closeModal();
+});
+
+// Bei offener Tastatur (iPhone) das Sheet über der Tastatur halten.
+if (window.visualViewport) {
+  const vv = window.visualViewport;
+  const fit = () => {
+    modalEl.style.height = vv.height + 'px';
+    modalEl.style.top = vv.offsetTop + 'px';
+  };
+  vv.addEventListener('resize', fit);
+  vv.addEventListener('scroll', fit);
+}
+
+// Eigener Bestätigungsdialog statt confirm() (der zeigt auf dem iPhone die Web-Adresse an).
+function askConfirm({ title, text = '', ok = 'OK', danger = false }) {
+  return new Promise(resolve => {
+    openModal(`
+      <h2 class="sheet-h">${esc(title)}</h2>
+      ${text ? `<p class="sheet-text">${esc(text)}</p>` : ''}
+      <button class="btn ${danger ? 'danger-fill' : ''}" id="c-ok">${esc(ok)}</button>
+      <button class="btn secondary" id="c-cancel">Abbrechen</button>`, () => resolve(false));
+    document.getElementById('c-ok').addEventListener('click', () => {
+      modalCloseHook = null;
+      closeModal();
+      resolve(true);
+    });
+    document.getElementById('c-cancel').addEventListener('click', closeModal);
+  });
+}
+
+// Auswahlmenü für "⋯"-Buttons.
+function openSheet(title, actions) {
+  openModal(`
+    <div class="sheet-title">${esc(title)}</div>
+    ${actions.map((a, i) => `
+      <button class="sheet-btn ${a.danger ? 'danger' : ''}" data-i="${i}" ${a.disabled ? 'disabled' : ''}>
+        ${icon(a.icon)}<span>${esc(a.label)}</span>
+      </button>`).join('')}
+    <button class="btn secondary" id="s-cancel" style="margin-top:6px">Abbrechen</button>`);
+  modalBox.querySelectorAll('[data-i]').forEach(b => b.addEventListener('click', () => {
+    closeModal();
+    actions[+b.dataset.i].run();
+  }));
+  document.getElementById('s-cancel').addEventListener('click', closeModal);
+}
+
+// ---------- Übung hinzufügen / bearbeiten ----------
+const EQUIPMENT = ['Maschine', 'Kabelzug', 'Kurzhanteln', 'Langhantel', 'Körpergewicht', 'Hex-Bar', 'SZ-Stange', 'Sonstiges'];
+
+// Alle bekannten Übungen (Plan, Original-Plan, Historie) als Vorschläge.
+function knownExercises() {
+  const map = new Map();
+  const add = e => {
+    const key = e.name.toLowerCase();
+    if (e.name && !map.has(key)) map.set(key, { name: e.name, equip: e.equip || '', sets: e.sets || 3, reps: e.reps || '10', kg: e.kg || '-' });
+  };
+  plan.forEach(w => w.exercises.forEach(add));
+  PLAN.forEach(w => w.exercises.forEach(add));
+  sortedSessions().forEach(s => s.exercises.forEach(e => add({ name: e.name, equip: e.equip, sets: e.sets.length })));
+  return [...map.values()];
+}
+
+function normalizeRange(v, decimals) {
+  const s = String(v).trim().replace(/\s+/g, '').replace(/–/g, '-');
+  if (!s) return '';
+  const part = decimals ? '\\d+(?:[.,]\\d+)?' : '\\d+';
+  if (!new RegExp(`^${part}(?:-${part})?$`).test(s)) return null;
+  return decimals ? s.replace(/\./g, ',') : s;
+}
+
+// opts: { title, submit, initial, exclude: [Namen], planOption: 'Push' | null, onSave(values, toPlan) }
+function exerciseForm(opts) {
+  const f = { name: '', equip: '', sets: 3, reps: '10', kg: '', ...opts.initial };
+  if (f.kg === '-') f.kg = '';
+  const exclude = new Set((opts.exclude || []).map(n => n.toLowerCase()));
+
+  openModal(`
+    <h2 class="sheet-h">${esc(opts.title)}</h2>
+    <div class="form">
+      <label for="f-name">Name</label>
+      <input class="field" id="f-name" value="${esc(f.name)}" placeholder="z. B. Kniebeugen" autocomplete="off" autocapitalize="sentences">
+      <div class="suggest" id="f-suggest"></div>
+      <label>Gerät</label>
+      <div class="equip-chips" id="f-equip">
+        ${EQUIPMENT.map(e => `<button type="button" data-eq="${esc(e)}" class="${e === f.equip ? 'on' : ''}">${esc(e)}</button>`).join('')}
+      </div>
+      <div class="form-row">
+        <div>
+          <label>Sätze</label>
+          <div class="stepper">
+            <button type="button" id="f-minus" aria-label="Weniger Sätze">${icon('minus')}</button>
+            <span id="f-sets">${f.sets}</span>
+            <button type="button" id="f-plus" aria-label="Mehr Sätze">${icon('plus')}</button>
+          </div>
+        </div>
+        <div>
+          <label for="f-reps">Wdh.</label>
+          <input class="field" id="f-reps" value="${esc(f.reps)}" placeholder="10" autocomplete="off">
+        </div>
+        <div>
+          <label for="f-kg">kg</label>
+          <input class="field" id="f-kg" value="${esc(f.kg)}" placeholder="–" inputmode="decimal" autocomplete="off">
+        </div>
+      </div>
+      <p class="hint">Wdh./kg auch als Bereich, z. B. 8-12</p>
+      ${opts.planOption ? `
+        <label class="check-line"><input type="checkbox" id="f-plan">
+          <span>Auch im Trainingsplan „${esc(opts.planOption)}“ speichern</span></label>` : ''}
+      <div class="form-error" id="f-error"></div>
+      <button class="btn" id="f-save">${esc(opts.submit)}</button>
+      <button class="btn secondary" id="f-cancel">Abbrechen</button>
+    </div>`);
+
+  const nameIn = document.getElementById('f-name');
+  const setsEl = document.getElementById('f-sets');
+  const suggestEl = document.getElementById('f-suggest');
+  const errorEl = document.getElementById('f-error');
+  const known = knownExercises().filter(e => !exclude.has(e.name.toLowerCase()));
+
+  const setEquip = eq => {
+    f.equip = eq;
+    modalBox.querySelectorAll('[data-eq]').forEach(b => b.classList.toggle('on', b.dataset.eq === eq));
+  };
+
+  const showSuggestions = () => {
+    const q = nameIn.value.trim().toLowerCase();
+    const hits = q ? known.filter(e => e.name.toLowerCase().includes(q) && e.name.toLowerCase() !== q).slice(0, 6) : [];
+    suggestEl.innerHTML = hits.map((e, i) => `<button type="button" data-s="${i}">${esc(e.name)}${e.equip ? ` <small>${esc(e.equip)}</small>` : ''}</button>`).join('');
+    suggestEl.querySelectorAll('[data-s]').forEach(b => b.addEventListener('click', () => {
+      const e = hits[+b.dataset.s];
+      nameIn.value = e.name;
+      setEquip(e.equip);
+      f.sets = e.sets;
+      setsEl.textContent = f.sets;
+      document.getElementById('f-reps').value = e.reps;
+      document.getElementById('f-kg').value = e.kg === '-' ? '' : e.kg;
+      suggestEl.innerHTML = '';
+    }));
+  };
+
+  nameIn.addEventListener('input', () => { errorEl.textContent = ''; showSuggestions(); });
+  modalBox.querySelectorAll('[data-eq]').forEach(b => b.addEventListener('click', () => setEquip(f.equip === b.dataset.eq ? '' : b.dataset.eq)));
+  document.getElementById('f-minus').addEventListener('click', () => { f.sets = Math.max(1, f.sets - 1); setsEl.textContent = f.sets; });
+  document.getElementById('f-plus').addEventListener('click', () => { f.sets = Math.min(20, f.sets + 1); setsEl.textContent = f.sets; });
+  document.getElementById('f-cancel').addEventListener('click', closeModal);
+
+  document.getElementById('f-save').addEventListener('click', () => {
+    const name = nameIn.value.trim().replace(/\s+/g, ' ');
+    const reps = normalizeRange(document.getElementById('f-reps').value, false);
+    const kg = normalizeRange(document.getElementById('f-kg').value, true);
+    let err = '';
+    if (!name) err = 'Bitte einen Namen eingeben.';
+    else if (exclude.has(name.toLowerCase())) err = 'Diese Übung ist hier schon drin.';
+    else if (reps === null) err = 'Wdh. bitte als Zahl, z. B. 10 oder 8-12.';
+    else if (kg === null) err = 'kg bitte als Zahl, z. B. 20 oder 22,5.';
+    if (err) {
+      errorEl.textContent = err;
+      return;
+    }
+    const planBox = document.getElementById('f-plan');
+    closeModal();
+    opts.onSave({ name, equip: f.equip, sets: f.sets, reps: reps || '10', kg: kg || '-' }, !!(planBox && planBox.checked));
+  });
+
+  if (!f.name) nameIn.focus();
+}
+
 // ---------- Datei-Download / Teilen ----------
 function downloadFile(name, content, type) {
   const blob = new Blob([content], { type });
@@ -184,18 +470,24 @@ function downloadFile(name, content, type) {
 
 function backupJson() {
   return JSON.stringify({
-    app: 'gym-tracker', version: 1, exported: new Date().toISOString(),
-    sessions: state.sessions, nextIndex: state.nextIndex,
+    app: 'gym-tracker', version: 2, exported: new Date().toISOString(),
+    sessions: state.sessions, nextIndex: state.nextIndex, plan,
   }, null, 2);
 }
 
-// Übernimmt Trainings aus einem Backup (bekannte IDs werden übersprungen).
-function mergeBackup(data, takeNextIndex) {
+// Übernimmt Trainings (und ggf. den Plan) aus einem Backup; bekannte IDs werden übersprungen.
+function mergeBackup(data) {
   if (!data || !Array.isArray(data.sessions)) throw new Error('format');
+  const importedPlan = cleanPlan(data.plan);
+  if (importedPlan) {
+    plan = importedPlan;
+    savePlan();
+  }
   const known = new Set(state.sessions.map(s => s.id));
   const added = data.sessions.map(cleanSession).filter(s => s && !known.has(s.id));
   state.sessions.push(...added);
-  if (takeNextIndex && validIndex(data.nextIndex)) state.nextIndex = data.nextIndex;
+  if (validIndex(data.nextIndex)) state.nextIndex = data.nextIndex;
+  if (!validIndex(state.nextIndex)) state.nextIndex = 0;
   save();
   return added.length;
 }
@@ -233,17 +525,13 @@ function setsText(sets) {
 }
 
 function sessionDescription(s) {
-  const lines = [`${sessionSets(s)} Sätze · ${fmtDuration(new Date(s.end) - new Date(s.start))}`, ''];
+  const lines = [`${setsLabel(sessionSets(s))} · ${fmtDuration(new Date(s.end) - new Date(s.start))}`, ''];
   for (const e of s.exercises) lines.push(`${e.name}: ${setsText(e.sets)}`);
   return lines.join('\n');
 }
 
-// feed = true: Kalender-Abo (eigener Kalendername + Aktualisierungsintervall).
-function buildIcs(sessions, feed) {
+function buildIcs(sessions) {
   const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//GymTracker//DE', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH'];
-  if (feed) {
-    lines.push('X-WR-CALNAME:Gym Training', 'REFRESH-INTERVAL;VALUE=DURATION:PT1H', 'X-PUBLISHED-TTL:PT1H');
-  }
   for (const s of sessions) {
     let end = new Date(s.end);
     if (end - new Date(s.start) < 5 * 60000) end = new Date(new Date(s.start).getTime() + 5 * 60000);
@@ -267,176 +555,11 @@ function exportSessionIcs(s) {
   downloadFile(name, buildIcs([s]), 'text/calendar;charset=utf-8');
 }
 
-// ---------- Kalender-Abo über GitHub-Gist ----------
-// Die App lädt nach jeder Änderung eine .ics-Datei (und ein Backup) in ein
-// geheimes Gist hoch. Der Apple-Kalender abonniert die feste Adresse dieser
-// Datei und holt sich neue Trainings automatisch.
-const SYNC_KEY = 'gymtracker.sync';
-const GIST_DESC = 'Gym Tracker – Trainingskalender';
-const ICS_FILE = 'gym-trainings.ics';
-const BACKUP_FILE = 'gym-backup.json';
-
-function emptySync() {
-  return { token: '', gistId: null, owner: null, pending: false, lastSync: null, error: null };
-}
-
-function loadSync() {
-  try {
-    const s = JSON.parse(localStorage.getItem(SYNC_KEY));
-    if (s && typeof s.token === 'string') return { ...emptySync(), ...s };
-  } catch (e) { /* ignorieren */ }
-  return emptySync();
-}
-
-let sync = loadSync();
-let syncRunning = null;
-let syncAgain = false;
-
-function saveSync() {
-  try { localStorage.setItem(SYNC_KEY, JSON.stringify(sync)); } catch (e) { /* ignorieren */ }
-}
-
-function syncConnected() {
-  return !!(sync.token && sync.gistId && sync.owner);
-}
-
-function calendarUrl() {
-  return `https://gist.githubusercontent.com/${sync.owner}/${sync.gistId}/raw/${ICS_FILE}`;
-}
-
-async function gh(path, opts = {}) {
-  const headers = { Accept: 'application/vnd.github+json', Authorization: `Bearer ${sync.token}` };
-  if (opts.body) headers['Content-Type'] = 'application/json';
-  const res = await fetch('https://api.github.com' + path, { ...opts, headers, cache: 'no-store' });
-  if (!res.ok) {
-    const err = new Error(`GitHub ${res.status}`);
-    err.status = res.status;
-    throw err;
-  }
-  return res.json();
-}
-
-function syncErrorText(e) {
-  if (e.status === 401) return 'Token ungültig oder abgelaufen – bitte neu verbinden.';
-  if (e.status === 403 || e.status === 404) return 'Keine Berechtigung für Gists – Token braucht das Recht „gist“.';
-  if (e.status) return `GitHub-Fehler ${e.status} – wird später erneut versucht.`;
-  return 'Keine Verbindung – wird automatisch nachgeholt.';
-}
-
-async function uploadGist() {
-  const files = {
-    [ICS_FILE]: { content: buildIcs(sortedSessions().reverse(), true) },
-    [BACKUP_FILE]: { content: backupJson() },
-  };
-  if (sync.gistId) {
-    try {
-      const g = await gh(`/gists/${sync.gistId}`, { method: 'PATCH', body: JSON.stringify({ files }) });
-      if (g.owner) sync.owner = g.owner.login;
-      return;
-    } catch (e) {
-      if (e.status !== 404) throw e;
-      sync.gistId = null; // Gist wurde gelöscht → neu anlegen
-    }
-  }
-  const g = await gh('/gists', {
-    method: 'POST',
-    body: JSON.stringify({ description: GIST_DESC, public: false, files }),
-  });
-  sync.gistId = g.id;
-  if (g.owner) sync.owner = g.owner.login;
-}
-
-function requestSync() {
-  if (!sync.token) return Promise.resolve();
-  sync.pending = true;
-  saveSync();
-  if (syncRunning) {
-    syncAgain = true;
-    return syncRunning;
-  }
-  syncRunning = (async () => {
-    do {
-      syncAgain = false;
-      try {
-        await uploadGist();
-        sync.pending = false;
-        sync.error = null;
-        sync.lastSync = new Date().toISOString();
-      } catch (e) {
-        sync.error = syncErrorText(e);
-      }
-      saveSync();
-    } while (syncAgain && !sync.error);
-    syncRunning = null;
-    updateSyncStatus();
-  })();
-  return syncRunning;
-}
-
-async function connectSync(token) {
-  sync = { ...emptySync(), token };
-  try {
-    const me = await gh('/user');
-    sync.owner = me.login;
-    // Schon ein Gist von früher (z. B. altes Handy)? Dann weiterverwenden und Trainings übernehmen.
-    const gists = await gh('/gists?per_page=100');
-    const found = gists.find(g => g.description === GIST_DESC && g.files && g.files[ICS_FILE]);
-    if (found) {
-      sync.gistId = found.id;
-      const full = await gh(`/gists/${found.id}`);
-      const f = full.files && full.files[BACKUP_FILE];
-      if (f) {
-        const text = f.truncated ? await (await fetch(f.raw_url)).text() : f.content;
-        mergeBackup(JSON.parse(text), state.sessions.length === 0);
-        planIndex = state.nextIndex;
-      }
-    }
-    saveSync();
-  } catch (e) {
-    sync = emptySync();
-    saveSync();
-    throw e;
-  }
-  await requestSync();
-  if (sync.error) {
-    const msg = sync.error;
-    sync = emptySync();
-    saveSync();
-    throw new Error(msg);
-  }
-}
-
-function updateSyncStatus() {
-  const el = document.getElementById('sync-status');
-  if (!el) return;
-  if (sync.error) el.textContent = '⚠️ ' + sync.error;
-  else if (syncRunning || sync.pending) el.textContent = '⏳ Wird übertragen …';
-  else if (sync.lastSync) el.textContent = `✓ Zuletzt übertragen: ${fmtDate(sync.lastSync)}, ${fmtTime(sync.lastSync)} Uhr`;
-  else el.textContent = '';
-}
-
-// Offline nicht übertragene Änderungen nachholen.
-function retrySync() {
-  if (sync.token && sync.pending && !syncRunning) requestSync();
-}
-window.addEventListener('online', retrySync);
-document.addEventListener('visibilitychange', () => { if (!document.hidden) retrySync(); });
-
-// ---------- Modal ----------
-function openModal(html) {
-  document.getElementById('modal-box').innerHTML = html;
-  document.getElementById('modal').classList.remove('hidden');
-}
-
-function closeModal() {
-  document.getElementById('modal').classList.add('hidden');
-}
-
-document.getElementById('modal').addEventListener('click', e => {
-  if (e.target.id === 'modal') closeModal();
+// ---------- Navigation ----------
+document.querySelectorAll('#nav button').forEach(b => {
+  b.insertAdjacentHTML('afterbegin', icon(b.dataset.icon));
 });
 
-// ---------- Navigation ----------
 document.getElementById('nav').addEventListener('click', e => {
   const b = e.target.closest('button[data-view]');
   if (!b) return;
@@ -456,7 +579,14 @@ function render() {
   renderPlan();
 }
 
-// ---------- Trainingsplan ----------
+// Neu zeichnen, ohne dass die Seite nach oben springt.
+function rerenderKeepScroll() {
+  const y = window.scrollY;
+  render();
+  window.scrollTo(0, y);
+}
+
+// ---------- Ansicht: Trainingsplan ----------
 function exerciseLine(workout, ex) {
   const last = lastSetsFor(workout.id, ex.name);
   let reps = ex.reps, kg = ex.kg;
@@ -464,21 +594,19 @@ function exerciseLine(workout, ex) {
     reps = range(last.map(s => s.reps).filter(v => v !== null), String) || reps;
     kg = range(last.map(s => s.kg).filter(v => v !== null), fmtNum) || kg;
   }
-  return `${ex.sets} Sätze · ${esc(reps)} Wdh. · ${esc(kg)} kg`;
+  return `${setsLabel(ex.sets)} · ${esc(reps)} Wdh. · ${esc(kg)} kg`;
 }
 
 function renderPlan() {
   if (!validIndex(planIndex)) planIndex = 0;
 
-  const tabs = PLAN.map((w, i) => {
+  const chips = plan.map((w, i) => {
     const recent = doneRecently(w.id);
-    const cls = ['tab'];
-    if (recent) cls.push('done');
-    if (i === planIndex) cls.push('active');
-    return `<button class="${cls.join(' ')}" data-tab="${i}">${recent ? '✓' : i + 1}</button>`;
+    return `<button class="chip ${i === planIndex ? 'active' : ''} ${recent ? 'done' : ''}" data-tab="${i}">
+      ${recent ? icon('check') : ''}${esc(w.name)}</button>`;
   }).join('');
 
-  const cards = PLAN.map((w, i) => {
+  const cards = plan.map((w, i) => {
     const last = lastSessionOf(w.id);
     let badge = '<span class="badge">Zukünftiges Training</span>';
     if (i === state.nextIndex) badge = '<span class="badge next">Nächstes Training</span>';
@@ -490,67 +618,143 @@ function renderPlan() {
         <div class="card-top">${badge}${date}</div>
         <h2>${esc(w.name)}</h2>
         <div class="stats">
-          <div class="stat"><small>Zuletzt</small>⏱ ${dur}</div>
-          <div class="stat"><small>Umfang</small>${totalSets(w)} Sätze</div>
+          <div class="stat"><small>Zuletzt</small>${dur}</div>
+          <div class="stat"><small>Sätze</small>${totalSets(w)}</div>
           <div class="stat"><small>Übungen</small>${w.exercises.length}</div>
         </div>
-        ${w.exercises.map(ex => `
+        <button class="add-line" data-add="${i}">${icon('plus')}Übung hinzufügen</button>
+        ${w.exercises.length ? w.exercises.map((ex, j) => `
           <div class="ex">
-            <div class="ex-name">${esc(ex.name)}</div>
-            <div class="ex-equip">${esc(ex.equip)}</div>
+            <div class="ex-head">
+              <div>
+                <div class="ex-name">${esc(ex.name)}</div>
+                ${ex.equip ? `<div class="ex-equip">${esc(ex.equip)}</div>` : ''}
+              </div>
+              <button class="more" data-more="${i}:${j}" aria-label="Optionen für ${esc(ex.name)}">${icon('more')}</button>
+            </div>
             <div class="ex-line">${exerciseLine(w, ex)}</div>
-          </div>`).join('')}
+          </div>`).join('') : '<p class="empty">Noch keine Übungen – füge oben welche hinzu.</p>'}
       </section>`;
   }).join('');
 
   app.innerHTML = `
-    <div class="plan-head"><h1>Trainingsplan</h1><div class="tabs">${tabs}</div></div>
+    <h1>Trainingsplan</h1>
+    <div class="chips-row" id="chips">${chips}</div>
     <div class="slider" id="slider">${cards}</div>
-    <button class="btn float" id="start">${esc(PLAN[planIndex].name)} starten</button>`;
+    <button class="btn float" id="start">${esc(plan[planIndex].name)} starten</button>`;
 
   const slider = document.getElementById('slider');
+  const chipRow = document.getElementById('chips');
   const step = () => slider.firstElementChild.getBoundingClientRect().width + 12;
-  requestAnimationFrame(() => { slider.scrollLeft = planIndex * step(); });
+  const showChip = (i, smooth) => {
+    const c = chipRow.children[i];
+    chipRow.scrollTo({ left: c.offsetLeft - 16, behavior: smooth ? 'smooth' : 'auto' });
+  };
+  requestAnimationFrame(() => {
+    slider.scrollLeft = planIndex * step();
+    showChip(planIndex, false);
+  });
 
   slider.addEventListener('scroll', () => {
-    const i = Math.min(PLAN.length - 1, Math.max(0, Math.round(slider.scrollLeft / step())));
+    const i = Math.min(plan.length - 1, Math.max(0, Math.round(slider.scrollLeft / step())));
     if (i !== planIndex) {
       planIndex = i;
-      document.querySelectorAll('.tab').forEach((t, j) => t.classList.toggle('active', j === i));
-      document.getElementById('start').textContent = `${PLAN[i].name} starten`;
+      [...chipRow.children].forEach((c, j) => c.classList.toggle('active', j === i));
+      showChip(i, true);
+      document.getElementById('start').textContent = `${plan[i].name} starten`;
     }
   }, { passive: true });
 
-  document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => {
+  chipRow.querySelectorAll('[data-tab]').forEach(t => t.addEventListener('click', () => {
     slider.scrollTo({ left: +t.dataset.tab * step(), behavior: 'smooth' });
+  }));
+
+  app.querySelectorAll('[data-add]').forEach(b => b.addEventListener('click', () => addToPlan(+b.dataset.add)));
+  app.querySelectorAll('[data-more]').forEach(b => b.addEventListener('click', () => {
+    const [i, j] = b.dataset.more.split(':').map(Number);
+    planExerciseMenu(i, j);
   }));
 
   document.getElementById('start').addEventListener('click', () => startWorkout(planIndex));
 }
 
-// ---------- Training durchführen ----------
+function addToPlan(i) {
+  const w = plan[i];
+  exerciseForm({
+    title: `Übung zu „${w.name}“ hinzufügen`,
+    submit: 'Hinzufügen',
+    exclude: w.exercises.map(e => e.name),
+    onSave: values => {
+      w.exercises.push(cleanPlanExercise(values));
+      savePlan();
+      rerenderKeepScroll();
+      toast(`„${values.name}“ hinzugefügt`);
+    },
+  });
+}
+
+function planExerciseMenu(i, j) {
+  const w = plan[i];
+  const ex = w.exercises[j];
+  openSheet(ex.name, [
+    {
+      label: 'Bearbeiten', icon: 'edit', run: () => exerciseForm({
+        title: 'Übung bearbeiten',
+        submit: 'Speichern',
+        initial: ex,
+        exclude: w.exercises.filter((_, k) => k !== j).map(e => e.name),
+        onSave: values => {
+          w.exercises[j] = cleanPlanExercise(values);
+          savePlan();
+          rerenderKeepScroll();
+        },
+      }),
+    },
+    { label: 'Nach oben', icon: 'up', disabled: j === 0, run: () => { moveItem(w.exercises, j, -1); savePlan(); rerenderKeepScroll(); } },
+    { label: 'Nach unten', icon: 'down', disabled: j === w.exercises.length - 1, run: () => { moveItem(w.exercises, j, 1); savePlan(); rerenderKeepScroll(); } },
+    {
+      label: 'Aus dem Plan entfernen', icon: 'trash', danger: true, run: async () => {
+        const ok = await askConfirm({
+          title: `„${ex.name}“ entfernen?`,
+          text: `Die Übung wird aus „${w.name}“ gelöscht. Bisherige Trainings bleiben erhalten.`,
+          ok: 'Entfernen', danger: true,
+        });
+        if (!ok) return;
+        w.exercises.splice(j, 1);
+        savePlan();
+        rerenderKeepScroll();
+        toast(`„${ex.name}“ entfernt`);
+      },
+    },
+  ]);
+}
+
+// ---------- Ansicht: Training läuft ----------
+// Baut eine Übung für das laufende Training; Vorschlagswerte vom letzten Mal bzw. aus dem Plan.
+function activeExercise(workoutId, ex) {
+  const last = lastSetsFor(workoutId, ex.name);
+  const planKg = num(String(ex.kg).split('-').pop());
+  const planReps = num(String(ex.reps).split('-')[0]);
+  const sets = [];
+  for (let n = 0; n < ex.sets; n++) {
+    const prev = last ? last[Math.min(n, last.length - 1)] : null;
+    sets.push({
+      kg: '', reps: '', done: false,
+      phKg: prev && prev.kg !== null ? fmtNum(prev.kg) : (planKg !== null ? fmtNum(planKg) : ''),
+      phReps: prev && prev.reps !== null ? String(prev.reps) : (planReps !== null ? String(planReps) : ''),
+    });
+  }
+  return { name: ex.name, equip: ex.equip, target: `${ex.sets} × ${ex.reps} Wdh.`, sets };
+}
+
 function startWorkout(i) {
-  const w = PLAN[i];
+  const w = plan[i];
   state.active = {
     workoutId: w.id,
     name: w.name,
     start: new Date().toISOString(),
     lastAt: null,
-    exercises: w.exercises.map(ex => {
-      const last = lastSetsFor(w.id, ex.name);
-      const planKg = num(String(ex.kg).split('-').pop());
-      const planReps = num(String(ex.reps).split('-')[0]);
-      const sets = [];
-      for (let n = 0; n < ex.sets; n++) {
-        const prev = last ? last[Math.min(n, last.length - 1)] : null;
-        sets.push({
-          kg: '', reps: '', done: false,
-          phKg: prev && prev.kg !== null ? fmtNum(prev.kg) : (planKg !== null ? fmtNum(planKg) : ''),
-          phReps: prev && prev.reps !== null ? String(prev.reps) : (planReps !== null ? String(planReps) : ''),
-        });
-      }
-      return { name: ex.name, equip: ex.equip, target: `${ex.sets} × ${ex.reps} Wdh.`, sets };
-    }),
+    exercises: w.exercises.map(ex => activeExercise(w.id, ex)),
   };
   save();
   render();
@@ -569,7 +773,7 @@ function setRowHtml(ei, si, s) {
       <div class="num">${si + 1}</div>
       <input inputmode="decimal" data-f="kg" placeholder="${esc(s.phKg || 'kg')}" value="${esc(s.kg)}" autocomplete="off">
       <input inputmode="numeric" data-f="reps" placeholder="${esc(s.phReps || 'Wdh.')}" value="${esc(s.reps)}" autocomplete="off">
-      <button class="check" data-act="check" aria-label="Satz abhaken">✓</button>
+      <button class="check" data-act="check" aria-label="Satz ${si + 1} abhaken">${icon('check')}</button>
     </div>`;
 }
 
@@ -578,22 +782,32 @@ function renderWorkout() {
   const p = workoutProgress(a);
   app.innerHTML = `
     <div class="wo-head">
-      <div><h2>${esc(a.name)}</h2><div class="muted" style="font-size:14px">${p.done} von ${p.total} Sätzen</div></div>
+      <div>
+        <h2>${esc(a.name)}</h2>
+        <div class="muted small">${p.done} von ${p.total} ${p.total === 1 ? 'Satz' : 'Sätzen'}</div>
+      </div>
       <div class="timer" id="timer">${fmtClock(Date.now() - new Date(a.start))}</div>
     </div>
     <div class="progress"><div style="width:${p.total ? (p.done / p.total) * 100 : 0}%"></div></div>
+    ${a.exercises.length ? '' : '<p class="empty">Keine Übungen – füge unten welche hinzu.</p>'}
     ${a.exercises.map((e, ei) => `
-      <div class="ex ${e.sets.length && e.sets.every(s => s.done) ? 'complete' : ''}">
-        <div class="ex-name">${esc(e.name)}</div>
-        <div class="ex-equip">${esc(e.equip)} · Ziel ${esc(e.target)}</div>
-        <div class="set-row head"><div>Satz</div><div style="text-align:center">kg</div><div style="text-align:center">Wdh.</div><div></div></div>
+      <div class="ex ${e.sets.length && e.sets.every(s => s.done) ? 'complete' : ''}" data-card="${ei}">
+        <div class="ex-head">
+          <div>
+            <div class="ex-name">${esc(e.name)}</div>
+            <div class="ex-equip">${e.equip ? esc(e.equip) + ' · ' : ''}Ziel ${esc(e.target)}</div>
+          </div>
+          <button class="more" data-act="menu" data-ei="${ei}" aria-label="Optionen für ${esc(e.name)}">${icon('more')}</button>
+        </div>
+        ${e.sets.length ? '<div class="set-row head"><div>Satz</div><div>kg</div><div>Wdh.</div><div></div></div>' : ''}
         ${e.sets.map((s, si) => setRowHtml(ei, si, s)).join('')}
         <div class="ex-actions">
-          <button class="link" data-act="add" data-ei="${ei}">+ Satz</button>
-          ${e.sets.length ? `<button class="link red" data-act="remove" data-ei="${ei}">− Satz</button>` : ''}
+          <button class="pill" data-act="add" data-ei="${ei}">${icon('plus')}Satz</button>
+          ${e.sets.length ? `<button class="pill red" data-act="remove" data-ei="${ei}">${icon('minus')}Satz</button>` : ''}
         </div>
       </div>`).join('')}
-    <button class="btn secondary" id="cancel" style="margin-top:16px">Training abbrechen</button>
+    <button class="add-card" id="add-ex">${icon('plus')}Übung hinzufügen</button>
+    <button class="btn secondary" id="cancel" style="margin-top:22px">Training abbrechen</button>
     <button class="btn float" id="finish">Training beenden</button>`;
 
   timerHandle = setInterval(() => {
@@ -607,17 +821,12 @@ function renderWorkout() {
     save();
   }));
 
-  // Bei offener Tastatur den schwebenden "Beenden"-Button ausblenden.
-  app.addEventListener('focusin', e => { if (e.target.matches('input')) document.body.classList.add('typing'); });
-  app.addEventListener('focusout', e => {
-    if (!(e.relatedTarget && e.relatedTarget.matches && e.relatedTarget.matches('input'))) document.body.classList.remove('typing');
-  });
-
   app.querySelectorAll('[data-act]').forEach(b => b.addEventListener('click', () => {
     const act = b.dataset.act;
     const row = b.closest('.set-row');
     const ei = row ? +row.dataset.ei : +b.dataset.ei;
     const ex = state.active.exercises[ei];
+    if (act === 'menu') return workoutExerciseMenu(ei);
     if (act === 'check') {
       const s = ex.sets[+row.dataset.si];
       s.done = !s.done;
@@ -637,22 +846,81 @@ function renderWorkout() {
       ex.sets.pop();
     }
     save();
-    const y = window.scrollY;
-    render();
-    window.scrollTo(0, y);
+    rerenderKeepScroll();
   }));
 
-  document.getElementById('cancel').addEventListener('click', () => {
-    if (!confirm('Training abbrechen? Die Eingaben gehen verloren.')) return;
+  document.getElementById('add-ex').addEventListener('click', addToWorkout);
+
+  document.getElementById('cancel').addEventListener('click', async () => {
+    const ok = await askConfirm({ title: 'Training abbrechen?', text: 'Alle Eingaben dieses Trainings gehen verloren.', ok: 'Training abbrechen', danger: true });
+    if (!ok) return;
     state.active = null;
     save();
     render();
+    window.scrollTo(0, 0);
   });
 
   document.getElementById('finish').addEventListener('click', finishWorkout);
 }
 
-function finishWorkout() {
+// Bei offener Tastatur den schwebenden "Beenden"-Button ausblenden.
+app.addEventListener('focusin', e => {
+  if (state.active && e.target.matches('input')) document.body.classList.add('typing');
+});
+app.addEventListener('focusout', e => {
+  if (!(e.relatedTarget && e.relatedTarget.matches && e.relatedTarget.matches('input'))) document.body.classList.remove('typing');
+});
+
+function addToWorkout() {
+  const a = state.active;
+  const pi = plan.findIndex(w => w.id === a.workoutId);
+  exerciseForm({
+    title: 'Übung hinzufügen',
+    submit: 'Hinzufügen',
+    exclude: a.exercises.map(e => e.name),
+    planOption: pi >= 0 ? plan[pi].name : null,
+    onSave: (values, toPlan) => {
+      a.exercises.push(activeExercise(a.workoutId, values));
+      save();
+      if (toPlan && pi >= 0 && !plan[pi].exercises.some(e => e.name.toLowerCase() === values.name.toLowerCase())) {
+        plan[pi].exercises.push(cleanPlanExercise(values));
+        savePlan();
+      }
+      render();
+      const card = app.querySelector(`[data-card="${a.exercises.length - 1}"]`);
+      if (card) card.scrollIntoView({ block: 'center' });
+      toast(toPlan ? `„${values.name}“ hinzugefügt – auch im Plan` : `„${values.name}“ hinzugefügt`);
+    },
+  });
+}
+
+function workoutExerciseMenu(ei) {
+  const list = state.active.exercises;
+  const ex = list[ei];
+  openSheet(ex.name, [
+    { label: 'Nach oben', icon: 'up', disabled: ei === 0, run: () => { moveItem(list, ei, -1); save(); rerenderKeepScroll(); } },
+    { label: 'Nach unten', icon: 'down', disabled: ei === list.length - 1, run: () => { moveItem(list, ei, 1); save(); rerenderKeepScroll(); } },
+    {
+      label: 'Aus diesem Training entfernen', icon: 'trash', danger: true, run: async () => {
+        const done = ex.sets.filter(s => s.done).length;
+        if (done) {
+          const ok = await askConfirm({
+            title: `„${ex.name}“ entfernen?`,
+            text: `${done} ${done === 1 ? 'abgehakter Satz geht' : 'abgehakte Sätze gehen'} verloren. Der Trainingsplan bleibt unverändert.`,
+            ok: 'Entfernen', danger: true,
+          });
+          if (!ok) return;
+        }
+        list.splice(ei, 1);
+        save();
+        rerenderKeepScroll();
+        toast(`„${ex.name}“ entfernt`);
+      },
+    },
+  ]);
+}
+
+async function finishWorkout() {
   const a = state.active;
   const exercises = a.exercises
     .map(e => ({
@@ -663,15 +931,20 @@ function finishWorkout() {
     .filter(e => e.sets.length);
 
   if (!exercises.length) {
-    if (confirm('Noch kein Satz abgehakt. Training verwerfen?')) {
+    const ok = await askConfirm({ title: 'Noch kein Satz abgehakt', text: 'Ohne abgehakte Sätze wird nichts gespeichert.', ok: 'Training verwerfen', danger: true });
+    if (ok) {
       state.active = null;
       save();
       render();
+      window.scrollTo(0, 0);
     }
     return;
   }
   const p = workoutProgress(a);
-  if (p.done < p.total && !confirm(`${p.done} von ${p.total} Sätzen erledigt. Training trotzdem beenden?`)) return;
+  if (p.done < p.total) {
+    const ok = await askConfirm({ title: 'Training beenden?', text: `${p.done} von ${p.total} ${p.total === 1 ? 'Satz' : 'Sätzen'} erledigt. Nur abgehakte Sätze werden gespeichert.`, ok: 'Beenden' });
+    if (!ok) return;
+  }
 
   // Erst lange nach dem letzten Satz auf "Beenden" getippt (z. B. zu Hause)?
   // Dann zählt der letzte abgehakte Satz als Ende des Trainings.
@@ -688,12 +961,11 @@ function finishWorkout() {
     exercises,
   };
   state.sessions.push(session);
-  const idx = PLAN.findIndex(w => w.id === a.workoutId);
-  state.nextIndex = (idx + 1) % PLAN.length;
+  const idx = plan.findIndex(w => w.id === a.workoutId);
+  state.nextIndex = (idx + 1) % plan.length;
   planIndex = state.nextIndex;
   state.active = null;
   save();
-  requestSync();
 
   view = 'calendar';
   calMonth = startOfMonth(new Date(session.start));
@@ -701,35 +973,31 @@ function finishWorkout() {
   render();
   window.scrollTo(0, 0);
 
-  const calHint = syncConnected()
-    ? 'Wird automatisch in deinen abonnierten Kalender übertragen.'
-    : 'Ist im Kalender der App eingetragen.';
   openModal(`
-    <div class="big-check">✅</div>
-    <h2 style="text-align:center">Training gespeichert!</h2>
-    <p class="muted" style="text-align:center">${esc(session.name)} · ${fmtDuration(new Date(session.end) - new Date(session.start))} · ${sessionSets(session)} Sätze<br>
-    ${calHint} Nächstes Training: <b>${esc(PLAN[state.nextIndex].name)}</b></p>
-    ${syncConnected() ? '' : '<button class="btn" id="m-ics">📅 Auch in Handy-Kalender eintragen</button>'}
-    <button class="btn secondary" id="m-close">Fertig</button>`);
-  const icsBtn = document.getElementById('m-ics');
-  if (icsBtn) icsBtn.addEventListener('click', () => { exportSessionIcs(session); closeModal(); });
+    <div class="big-check">${icon('check')}</div>
+    <h2 class="sheet-h" style="text-align:center">Training gespeichert!</h2>
+    <p class="sheet-text" style="text-align:center">${esc(session.name)} · ${fmtDuration(new Date(session.end) - new Date(session.start))} · ${setsLabel(sessionSets(session))}<br>
+    Nächstes Training: <b>${esc(plan[state.nextIndex].name)}</b></p>
+    <button class="btn" id="m-close">Fertig</button>
+    <button class="btn secondary" id="m-ics">${icon('calendar')}In Handy-Kalender eintragen</button>`);
+  document.getElementById('m-ics').addEventListener('click', () => { exportSessionIcs(session); closeModal(); });
   document.getElementById('m-close').addEventListener('click', closeModal);
 }
 
-// ---------- Kalender ----------
+// ---------- Ansicht: Kalender ----------
 const MONTHS = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
 
 function sessionCardHtml(s) {
   return `
     <div class="session">
       <div class="session-title">${esc(s.name)}</div>
-      <div class="muted" style="font-size:14px;margin-top:2px">
-        ${fmtDate(s.start)} · ${fmtTime(s.start)}–${fmtTime(s.end)} · ${fmtDuration(new Date(s.end) - new Date(s.start))} · ${sessionSets(s)} Sätze
+      <div class="muted small" style="margin-top:2px">
+        ${fmtDate(s.start)} · ${fmtTime(s.start)}–${fmtTime(s.end)} · ${fmtDuration(new Date(s.end) - new Date(s.start))} · ${setsLabel(sessionSets(s))}
       </div>
       <ul>${s.exercises.map(e => `<li><b>${esc(e.name)}</b>: ${esc(setsText(e.sets))}</li>`).join('')}</ul>
       <div class="btn-row">
-        ${syncConnected() ? '' : `<button class="btn small secondary" data-ics="${esc(s.id)}">📅 In Handy-Kalender</button>`}
-        <button class="btn small danger" data-del="${esc(s.id)}">Löschen</button>
+        <button class="btn small secondary" data-ics="${esc(s.id)}">${icon('calendar')}In Handy-Kalender</button>
+        <button class="btn small danger" data-del="${esc(s.id)}">${icon('trash')}Löschen</button>
       </div>
     </div>`;
 }
@@ -779,126 +1047,62 @@ function renderCalendar() {
     </div>
     <div class="cal-grid">${cells}</div>
     <div class="month-sum">${monthCount} ${monthCount === 1 ? 'Training' : 'Trainings'} in diesem Monat · ${state.sessions.length} insgesamt</div>
-    <h3 style="margin:18px 0 10px">${heading}</h3>
+    <h3 class="list-h">${heading}</h3>
     ${list.length ? list.map(sessionCardHtml).join('') : `<p class="muted">${empty}</p>`}`;
 
   document.getElementById('prev').addEventListener('click', () => { calMonth = new Date(y, m - 1, 1); render(); });
   document.getElementById('next').addEventListener('click', () => { calMonth = new Date(y, m + 1, 1); render(); });
-  app.querySelectorAll('[data-day]').forEach(b => b.addEventListener('click', () => { calSelected = b.dataset.day; render(); }));
+  app.querySelectorAll('[data-day]').forEach(b => b.addEventListener('click', () => { calSelected = b.dataset.day; rerenderKeepScroll(); }));
   app.querySelectorAll('[data-ics]').forEach(b => b.addEventListener('click', () => {
     const s = state.sessions.find(x => x.id === b.dataset.ics);
     if (s) exportSessionIcs(s);
   }));
-  app.querySelectorAll('[data-del]').forEach(b => b.addEventListener('click', () => {
-    if (!confirm('Dieses Training wirklich löschen?')) return;
+  app.querySelectorAll('[data-del]').forEach(b => b.addEventListener('click', async () => {
+    const ok = await askConfirm({ title: 'Training löschen?', text: 'Das Training wird aus dem Kalender der App entfernt.', ok: 'Löschen', danger: true });
+    if (!ok) return;
     state.sessions = state.sessions.filter(x => x.id !== b.dataset.del);
     save();
-    requestSync();
-    render();
+    rerenderKeepScroll();
   }));
 }
 
-// ---------- Daten ----------
-function syncPanelHtml() {
-  if (!syncConnected()) {
-    return `
-      <div class="panel">
-        <h3>Apple-Kalender verbinden (Abo)</h3>
-        <p>Neue Trainings erscheinen dann automatisch in deinem Apple-Kalender. Die App legt dafür in deinem
-        GitHub-Konto ein <b>geheimes Gist</b> an (nicht öffentlich gelistet, aber für jeden mit dem Link lesbar).</p>
-        <ol class="steps">
-          <li><a href="https://github.com/settings/tokens/new?scopes=gist&description=Gym%20Tracker" target="_blank" rel="noopener">Token bei GitHub erstellen</a>:
-            nur Haken bei <b>gist</b>, Ablauf z. B. „No expiration“ → <i>Generate token</i> → kopieren.</li>
-          <li>Token hier einfügen und verbinden.</li>
-        </ol>
-        <input class="field" id="token" type="password" placeholder="ghp_…" autocomplete="off" autocapitalize="off" spellcheck="false">
-        <button class="btn" id="connect" style="margin-top:10px">Verbinden</button>
-        <p class="muted" id="sync-status" style="margin:10px 0 0">${sync.error ? '⚠️ ' + esc(sync.error) : ''}</p>
-      </div>`;
-  }
-  const https = calendarUrl();
-  return `
-    <div class="panel">
-      <h3>Apple-Kalender (Abo) ✓</h3>
-      <p>Einmal abonnieren, danach kommen neue Trainings automatisch. Der Kalender aktualisiert sich je nach
-      Einstellung alle 15 Min. bis 1 Std.</p>
-      <a class="btn" href="${esc(https.replace(/^https:/, 'webcal:'))}">📅 Im Apple-Kalender abonnieren</a>
-      <button class="btn secondary" id="copy-url">🔗 Kalender-Adresse kopieren</button>
-      <button class="btn secondary" id="sync-now">🔄 Jetzt übertragen</button>
-      <p class="muted" id="sync-status" style="margin:10px 0 0"></p>
-      <p class="muted" style="margin:10px 0 0;word-break:break-all;font-size:12px">${esc(https)}</p>
-      <button class="link red" id="disconnect" style="margin-top:6px">Verbindung trennen</button>
-    </div>`;
-}
-
+// ---------- Ansicht: Daten ----------
 function renderData() {
   app.innerHTML = `
     <h1>Daten</h1>
-    ${syncPanelHtml()}
     <div class="panel">
       <h3>Nächstes Training</h3>
       <p>Wird nach jedem Training automatisch weitergeschaltet.</p>
-      <select id="next-sel">${PLAN.map((w, i) => `<option value="${i}" ${i === state.nextIndex ? 'selected' : ''}>${i + 1}. ${esc(w.name)}</option>`).join('')}</select>
+      <select id="next-sel">${plan.map((w, i) => `<option value="${i}" ${i === state.nextIndex ? 'selected' : ''}>${i + 1}. ${esc(w.name)}</option>`).join('')}</select>
     </div>
     <div class="panel">
       <h3>Kalender-Datei (.ics)</h3>
-      <p>Alle ${state.sessions.length} Trainings einmalig als Datei exportieren (ohne Abo).</p>
-      <button class="btn secondary" id="ics-all" ${state.sessions.length ? '' : 'disabled'}>📅 Kalender-Datei exportieren</button>
+      <p>${state.sessions.length === 1 ? 'Dein Training' : `Alle ${state.sessions.length} Trainings`} als Datei exportieren, z. B. für den Apple- oder Google-Kalender.</p>
+      <button class="btn secondary" id="ics-all" ${state.sessions.length ? '' : 'disabled'}>${icon('calendar')}Kalender-Datei exportieren</button>
     </div>
     <div class="panel">
       <h3>Backup</h3>
-      <p>Die Daten liegen auf diesem Gerät im Browser${syncConnected() ? ' und als Kopie im Gist' : ''}. Mit einem Backup kannst du sie auch auf ein neues Handy übertragen.</p>
-      <button class="btn secondary" id="export">⬇️ Backup speichern</button>
-      <button class="btn secondary" id="import">⬆️ Backup laden</button>
+      <p>Trainings und Plan liegen nur auf diesem Gerät. Mit einem Backup kannst du sie sichern oder auf ein neues Handy übertragen.</p>
+      <button class="btn secondary" id="export">${icon('download')}Backup speichern</button>
+      <button class="btn secondary" id="import">${icon('upload')}Backup laden</button>
       <input type="file" id="import-file" accept="application/json,.json" class="hidden">
     </div>
     <div class="panel">
+      <h3>Trainingsplan</h3>
+      <p>${planIsDefault() ? 'Du nutzt den Original-Plan.' : 'Du hast den Plan angepasst. Hier kannst du ihn auf das Original zurücksetzen.'}</p>
+      <button class="btn secondary" id="plan-reset" ${planIsDefault() ? 'disabled' : ''}>${icon('reset')}Plan zurücksetzen</button>
+    </div>
+    <div class="panel">
       <h3>Alles löschen</h3>
-      <p>Löscht alle gespeicherten Trainings auf diesem Gerät${syncConnected() ? ' und im Abo-Kalender' : ''}.</p>
-      <button class="btn danger" id="reset">Alle Daten löschen</button>
+      <p>Löscht alle gespeicherten Trainings auf diesem Gerät.</p>
+      <button class="btn danger" id="reset">${icon('trash')}Alle Trainings löschen</button>
     </div>`;
-
-  updateSyncStatus();
-
-  const connectBtn = document.getElementById('connect');
-  if (connectBtn) connectBtn.addEventListener('click', async () => {
-    const token = document.getElementById('token').value.trim();
-    if (!token) return;
-    connectBtn.disabled = true;
-    connectBtn.textContent = 'Verbinde …';
-    try {
-      await connectSync(token);
-    } catch (e) {
-      alert(e.status ? syncErrorText(e) : (e.message || 'Verbindung fehlgeschlagen.'));
-    }
-    render();
-  });
-
-  const copyBtn = document.getElementById('copy-url');
-  if (copyBtn) copyBtn.addEventListener('click', async () => {
-    try {
-      await navigator.clipboard.writeText(calendarUrl());
-      copyBtn.textContent = '✓ Kopiert';
-    } catch (e) {
-      prompt('Kalender-Adresse:', calendarUrl());
-    }
-  });
-
-  const syncBtn = document.getElementById('sync-now');
-  if (syncBtn) syncBtn.addEventListener('click', () => { requestSync(); updateSyncStatus(); });
-
-  const discBtn = document.getElementById('disconnect');
-  if (discBtn) discBtn.addEventListener('click', () => {
-    if (!confirm('Verbindung trennen? Das Gist und das Kalender-Abo bleiben bestehen, werden aber nicht mehr aktualisiert.')) return;
-    sync = emptySync();
-    saveSync();
-    render();
-  });
 
   document.getElementById('next-sel').addEventListener('change', e => {
     state.nextIndex = +e.target.value;
     planIndex = state.nextIndex;
     save();
+    toast(`Nächstes Training: ${plan[state.nextIndex].name}`);
   });
   document.getElementById('ics-all').addEventListener('click', () => {
     downloadFile('gym-trainings.ics', buildIcs(sortedSessions().reverse()), 'text/calendar;charset=utf-8');
@@ -912,29 +1116,36 @@ function renderData() {
     const f = fileInput.files[0];
     if (!f) return;
     try {
-      const added = mergeBackup(JSON.parse(await f.text()), true);
+      const added = mergeBackup(JSON.parse(await f.text()));
       planIndex = state.nextIndex;
-      requestSync();
-      alert(`${added} Trainings importiert.`);
       render();
+      toast(`${added} ${added === 1 ? 'Training' : 'Trainings'} importiert`);
     } catch (e) {
-      alert('Die Datei ist kein gültiges Backup.');
+      toast('Die Datei ist kein gültiges Backup.');
     }
   });
-  document.getElementById('reset').addEventListener('click', () => {
-    if (!confirm('Wirklich ALLE Trainings löschen?')) return;
-    if (!confirm('Sicher? Das kann nicht rückgängig gemacht werden.')) return;
+  document.getElementById('plan-reset').addEventListener('click', async () => {
+    const ok = await askConfirm({ title: 'Plan zurücksetzen?', text: 'Hinzugefügte, geänderte und entfernte Übungen werden auf den Original-Plan zurückgesetzt. Deine Trainings bleiben erhalten.', ok: 'Zurücksetzen', danger: true });
+    if (!ok) return;
+    plan = defaultPlan();
+    savePlan();
+    if (!validIndex(state.nextIndex)) state.nextIndex = 0;
+    render();
+    toast('Plan zurückgesetzt');
+  });
+  document.getElementById('reset').addEventListener('click', async () => {
+    const ok = await askConfirm({ title: 'Alle Trainings löschen?', text: 'Das kann nicht rückgängig gemacht werden. Mach vorher am besten ein Backup.', ok: 'Alles löschen', danger: true });
+    if (!ok) return;
     state = { sessions: [], active: null, nextIndex: 0 };
     planIndex = 0;
     save();
-    requestSync();
     render();
+    toast('Alle Trainings gelöscht');
   });
 }
 
 // ---------- Start ----------
 render();
-retrySync();
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
