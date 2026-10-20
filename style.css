@@ -30,7 +30,9 @@ main { padding: 12px 16px calc(180px + var(--safe-bottom)); max-width: 640px; ma
 body.in-workout main { padding-bottom: calc(110px + var(--safe-bottom)); }
 
 button { font: inherit; color: inherit; border: 0; background: none; cursor: pointer; }
+button, input, a, select { touch-action: manipulation; }
 input { font: inherit; }
+a { color: var(--accent); }
 
 h1 { font-size: 28px; margin: 8px 0 12px; }
 h2 { font-size: 26px; margin: 10px 0 14px; }
@@ -88,6 +90,8 @@ h2 { font-size: 26px; margin: 10px 0 14px; }
 }
 .btn.secondary { background: var(--card2); color: #fff; }
 .btn.danger { background: transparent; color: var(--red); border: 1px solid var(--red); }
+.btn:disabled { opacity: .4; }
+a.btn { text-decoration: none; }
 .btn.small { display: inline-block; width: auto; padding: 9px 14px; font-size: 14px; }
 .btn + .btn { margin-top: 10px; }
 .btn-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
@@ -98,6 +102,7 @@ h2 { font-size: 26px; margin: 10px 0 14px; }
   max-width: 608px; margin: 0 auto; z-index: 5; box-shadow: 0 6px 24px rgba(0,0,0,.6);
 }
 body.in-workout .float { bottom: calc(16px + var(--safe-bottom)); }
+body.typing .float { display: none; }
 
 /* ---------- Navigation unten ---------- */
 .nav {
@@ -168,7 +173,8 @@ body.in-workout .nav { display: none; }
 .panel { background: var(--card); border: 1px solid var(--border); border-radius: 18px; padding: 16px; margin-bottom: 14px; }
 .panel h3 { margin: 0 0 6px; font-size: 17px; }
 .panel p { margin: 0 0 12px; color: var(--muted); font-size: 14px; line-height: 1.4; }
-select {
+.panel .steps { margin: 0 0 12px; padding-left: 20px; color: #c7c7cc; font-size: 14px; line-height: 1.5; }
+.field, select {
   width: 100%; padding: 12px; border-radius: 12px; background: var(--card2); color: #fff;
   border: 1px solid var(--border); font: inherit;
 }

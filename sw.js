@@ -1,5 +1,5 @@
 // Offline-Cache. Bei Änderungen an der App die Versionsnummer erhöhen.
-const CACHE = 'gym-tracker-v1';
+const CACHE = 'gym-tracker-v2';
 const FILES = [
   './',
   'index.html',
@@ -24,16 +24,24 @@ self.addEventListener('activate', e => {
   );
 });
 
-// Netzwerk zuerst (damit Updates ankommen), offline aus dem Cache.
+// Sofort aus dem Cache antworten (auch bei schlechtem Netz im Gym) und im
+// Hintergrund aktualisieren – Updates sind beim nächsten Öffnen da.
+// Nur eigene Dateien; Anfragen an GitHub usw. gehen unverändert durch.
 self.addEventListener('fetch', e => {
-  if (e.request.method !== 'GET') return;
-  e.respondWith(
-    fetch(e.request)
+  const req = e.request;
+  if (req.method !== 'GET' || new URL(req.url).origin !== self.location.origin) return;
+  e.respondWith(caches.open(CACHE).then(async cache => {
+    const cached = await cache.match(req, { ignoreSearch: true });
+    const network = fetch(req)
       .then(res => {
-        const copy = res.clone();
-        caches.open(CACHE).then(c => c.put(e.request, copy));
+        if (res.ok) cache.put(req, res.clone());
         return res;
       })
-      .catch(() => caches.match(e.request, { ignoreSearch: true }))
-  );
+      .catch(() => cached || Response.error());
+    if (cached) {
+      e.waitUntil(network.catch(() => {}));
+      return cached;
+    }
+    return network;
+  }));
 });
