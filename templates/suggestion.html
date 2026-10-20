@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block content %}
+<h1 class="mb-4">Trainingsvorschlag</h1>
+<p>Empfohlene Muskelgruppe heute: <strong>{{ muscle_group }}</strong></p>
+
+{% if not suggestions %}
+  <p>Noch keine Übungen für diese Muskelgruppe vorhanden. Lege welche unter <a href="{{ url_for('exercises') }}">Übungen</a> an.</p>
+{% endif %}
+
+<div class="row g-3">
+{% for s in suggestions %}
+  <div class="col-sm-6 col-lg-4">
+    <div class="card h-100">
+      <div class="card-body">
+        <h5 class="card-title">{{ s.exercise.name }}</h5>
+        <p class="card-text text-muted">{{ s.exercise.equipment }}</p>
+        {% if s.weight is not none %}
+          <p class="card-text">Vorschlag: <strong>{{ s.weight }} kg × {{ s.reps }}</strong></p>
+        {% endif %}
+        <p class="card-text"><small class="text-muted">{{ s.info }}</small></p>
+      </div>
+    </div>
+  </div>
+{% endfor %}
+</div>
+{% endblock %}

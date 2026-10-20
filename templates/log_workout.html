@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block content %}
+<h1 class="mb-4">Training loggen</h1>
+<form method="post" action="{{ url_for('log_workout') }}">
+  <div class="row g-2 mb-3">
+    <div class="col-sm-4">
+      <label class="form-label">Datum</label>
+      <input type="date" name="date" class="form-control" value="{{ today }}" required>
+    </div>
+    <div class="col-sm-8">
+      <label class="form-label">Notiz (optional)</label>
+      <input type="text" name="note" class="form-control" placeholder="z.B. Push Day">
+    </div>
+  </div>
+
+  <h2>Sätze</h2>
+  <div id="sets-container"></div>
+  <button type="button" class="btn btn-outline-secondary mb-3" onclick="addSetRow()">+ Satz hinzufügen</button>
+
+  <div>
+    <button type="submit" class="btn btn-primary">Workout speichern</button>
+  </div>
+</form>
+
+<template id="set-row-template">
+  <div class="row g-2 mb-2 align-items-center set-row">
+    <div class="col-sm-5">
+      <select name="exercise_id" class="form-select" required>
+        <option value="" disabled selected>Übung wählen…</option>
+        {% for ex in exercises %}
+          <option value="{{ ex.id }}">{{ ex.name }} ({{ ex.muscle_group }})</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-sm-3">
+      <input type="number" step="0.5" min="0" name="weight" class="form-control" placeholder="Gewicht (kg)" required>
+    </div>
+    <div class="col-sm-3">
+      <input type="number" min="1" name="reps" class="form-control" placeholder="Wdh." required>
+    </div>
+    <div class="col-sm-1">
+      <button type="button" class="btn btn-outline-danger" onclick="this.closest('.set-row').remove()">×</button>
+    </div>
+  </div>
+</template>
+
+<script>
+function addSetRow() {
+  const template = document.getElementById('set-row-template');
+  const clone = template.content.cloneNode(true);
+  document.getElementById('sets-container').appendChild(clone);
+}
+addSetRow();
+</script>
+{% endblock %}
