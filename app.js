@@ -550,9 +550,34 @@ function buildIcs(sessions) {
   return lines.map(icsFold).join('\r\n') + '\r\n';
 }
 
+const IS_IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const ICS_CACHE = 'gym-ics';
+
+// iPhone/iPad zeigen "Zum Kalender hinzufügen" nur, wenn eine .ics-Datei wie eine
+// Seite geöffnet wird (Typ text/calendar) – nicht beim Teilen oder Herunterladen.
+// Deshalb die Datei in einen Cache legen und öffnen; der Service Worker liefert sie aus.
+async function openIcsOnIos(name, ics) {
+  if ('caches' in window && navigator.serviceWorker && navigator.serviceWorker.controller) {
+    try {
+      const url = new URL(`kalender/${encodeURIComponent(name)}`, location.href).href;
+      const cache = await caches.open(ICS_CACHE);
+      await cache.put(url, new Response(ics, { headers: { 'Content-Type': 'text/calendar; charset=utf-8' } }));
+      location.href = url;
+      return;
+    } catch (e) { /* weiter mit Fallback */ }
+  }
+  location.href = 'data:text/calendar;charset=utf-8,' + encodeURIComponent(ics);
+}
+
+function exportIcs(name, sessions) {
+  const ics = buildIcs(sessions);
+  if (IS_IOS) openIcsOnIos(name, ics);
+  else downloadFile(name, ics, 'text/calendar;charset=utf-8');
+}
+
 function exportSessionIcs(s) {
-  const name = `training-${dayKey(s.start)}-${s.workoutId || 'training'}.ics`;
-  downloadFile(name, buildIcs([s]), 'text/calendar;charset=utf-8');
+  exportIcs(`training-${dayKey(s.start)}-${s.workoutId || 'training'}.ics`, [s]);
 }
 
 // ---------- Navigation ----------
@@ -1105,7 +1130,7 @@ function renderData() {
     toast(`Nächstes Training: ${plan[state.nextIndex].name}`);
   });
   document.getElementById('ics-all').addEventListener('click', () => {
-    downloadFile('gym-trainings.ics', buildIcs(sortedSessions().reverse()), 'text/calendar;charset=utf-8');
+    exportIcs('gym-trainings.ics', sortedSessions().reverse());
   });
   document.getElementById('export').addEventListener('click', () => {
     downloadFile(`gym-backup-${dayKey(new Date())}.json`, backupJson(), 'application/json');
