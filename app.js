@@ -4,6 +4,8 @@
 // Alles liegt lokal im Browser (localStorage). Backup über "Daten" → Export.
 const STORE_KEY = 'gymtracker.v1';
 const PLAN_KEY = 'gymtracker.plan';
+const LIB_KEY = 'gymtracker.library';
+const SETTINGS_KEY = 'gymtracker.settings';
 
 // Reste der zurückgestellten Kalender-Abo-Funktion (enthielt einen Token) entfernen.
 try { localStorage.removeItem('gymtracker.sync'); } catch (e) { /* ignorieren */ }
@@ -76,6 +78,39 @@ function planIsDefault() {
 
 function validIndex(i) {
   return Number.isInteger(i) && i >= 0 && i < plan.length;
+}
+
+// ---------- Einstellungen ----------
+const WEIGHT_STEPS = [1, 2.5, 5];
+
+function cleanSettings(x) {
+  const s = { weightStep: 5 };
+  if (x && WEIGHT_STEPS.includes(x.weightStep)) s.weightStep = x.weightStep;
+  return s;
+}
+
+let settings = cleanSettings(readJson(SETTINGS_KEY));
+
+function saveSettings() {
+  writeJson(SETTINGS_KEY, settings);
+}
+
+// ---------- Übungsspeicher ----------
+// Jede Übung, die du einmal angelegt hast, bleibt hier erhalten – auch wenn sie
+// aus dem Plan entfernt wird – und taucht wieder in den Vorschlägen auf.
+function cleanLibrary(x) {
+  if (!Array.isArray(x)) return [];
+  return x.filter(e => e && typeof e.name === 'string' && e.name.trim()).map(cleanPlanExercise);
+}
+
+let library = cleanLibrary(readJson(LIB_KEY));
+
+function rememberExercise(e) {
+  const v = cleanPlanExercise(e);
+  const i = library.findIndex(x => x.name.toLowerCase() === v.name.toLowerCase());
+  if (i >= 0) library[i] = v;
+  else library.push(v);
+  writeJson(LIB_KEY, library);
 }
 
 // ---------- Trainingsdaten ----------
@@ -214,11 +249,28 @@ function lastSetsFor(workoutId, exName) {
   for (const pass of [true, false]) {
     for (const s of all) {
       if (pass && s.workoutId !== workoutId) continue;
-      const ex = s.exercises.find(e => e.name === exName);
+      const ex = s.exercises.find(e => e.name.toLowerCase() === exName.toLowerCase());
       if (ex && ex.sets.length) return ex.sets;
     }
   }
   return null;
+}
+
+// Alle bisherigen Einheiten einer Übung (neueste zuerst), optional nur vor einem Zeitpunkt.
+function historyFor(name, before) {
+  return exerciseHistory(state.sessions, name, before);
+}
+
+// Tendenz jeder Übung einer Einheit im Vergleich zur vorherigen Einheit derselben Übung.
+function sessionTrends(s) {
+  return s.exercises.map(e => {
+    const prev = historyFor(e.name, s.start)[0];
+    return compareSets(e.sets, prev ? prev.sets : null);
+  });
+}
+
+function recommendationFor(name, reps) {
+  return recommend({ history: historyFor(name), reps, name, step: settings.weightStep });
 }
 
 function doneRecently(workoutId) {
@@ -243,6 +295,14 @@ const ICONS = {
   upload: '<path d="M12 15V4M7 9l5-5 5 5M5 20h14"/>',
   clock: '<circle cx="12" cy="13" r="7.5"/><path d="M12 9.5V13l2.5 1.8M9.5 2.5h5"/>',
   reset: '<path d="M4 12a8 8 0 1 0 2.4-5.7M4 4v4.5h4.5"/>',
+  trendUp: '<path d="M4 17l6-6 4 4 6-7M14 8h6v6"/>',
+  trendDown: '<path d="M4 7l6 6 4-4 6 7M14 16h6v-6"/>',
+  chart: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
+  table: '<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M3.5 9.5h17M3.5 14.5h17M9.5 4.5v15"/>',
+  left: '<path d="M15 6l-6 6 6 6"/>',
+  right: '<path d="M9 6l6 6-6 6"/>',
+  star: '<path d="M12 4l2.4 5 5.4.6-4 3.7 1.1 5.4L12 16l-4.9 2.7 1.1-5.4-4-3.7 5.4-.6z"/>',
+  info: '<circle cx="12" cy="12" r="8.5"/><path d="M12 11v5.5M12 7.6v.1"/>',
 };
 
 function icon(name) {
@@ -339,9 +399,22 @@ function knownExercises() {
     if (e.name && !map.has(key)) map.set(key, { name: e.name, equip: e.equip || '', sets: e.sets || 3, reps: e.reps || '10', kg: e.kg || '-' });
   };
   plan.forEach(w => w.exercises.forEach(add));
+  library.forEach(add);
   PLAN.forEach(w => w.exercises.forEach(add));
   sortedSessions().forEach(s => s.exercises.forEach(e => add({ name: e.name, equip: e.equip, sets: e.sets.length })));
-  return [...map.values()];
+  return [...map.values()].map(e => {
+    const last = historyFor(e.name)[0];
+    return { ...e, last: last ? lastText(last.sets) : '' };
+  });
+}
+
+// Kurzform der letzten Leistung, z. B. "25 kg × 10".
+function lastText(sets) {
+  const top = topKg(sets);
+  const work = workSets(sets);
+  const reps = work.length ? Math.max(...work.map(x => x.reps)) : null;
+  if (top !== null && top > 0) return `${fmtNum(top)} kg × ${reps === null ? '–' : reps}`;
+  return reps === null ? '' : `${reps} Wdh.`;
 }
 
 function normalizeRange(v, decimals) {
@@ -409,7 +482,7 @@ function exerciseForm(opts) {
   const showSuggestions = () => {
     const q = nameIn.value.trim().toLowerCase();
     const hits = q ? known.filter(e => e.name.toLowerCase().includes(q) && e.name.toLowerCase() !== q).slice(0, 6) : [];
-    suggestEl.innerHTML = hits.map((e, i) => `<button type="button" data-s="${i}">${esc(e.name)}${e.equip ? ` <small>${esc(e.equip)}</small>` : ''}</button>`).join('');
+    suggestEl.innerHTML = hits.map((e, i) => `<button type="button" data-s="${i}">${esc(e.name)}${e.equip ? ` <small>${esc(e.equip)}</small>` : ''}${e.last ? ` <small>· zuletzt ${esc(e.last)}</small>` : ''}</button>`).join('');
     suggestEl.querySelectorAll('[data-s]').forEach(b => b.addEventListener('click', () => {
       const e = hits[+b.dataset.s];
       nameIn.value = e.name;
@@ -470,8 +543,8 @@ function downloadFile(name, content, type) {
 
 function backupJson() {
   return JSON.stringify({
-    app: 'gym-tracker', version: 2, exported: new Date().toISOString(),
-    sessions: state.sessions, nextIndex: state.nextIndex, plan,
+    app: 'gym-tracker', version: 3, exported: new Date().toISOString(),
+    sessions: state.sessions, nextIndex: state.nextIndex, plan, library, settings,
   }, null, 2);
 }
 
@@ -482,6 +555,14 @@ function mergeBackup(data) {
   if (importedPlan) {
     plan = importedPlan;
     savePlan();
+  }
+  for (const e of cleanLibrary(data.library)) {
+    if (!library.some(x => x.name.toLowerCase() === e.name.toLowerCase())) library.push(e);
+  }
+  writeJson(LIB_KEY, library);
+  if (data.settings) {
+    settings = cleanSettings(data.settings);
+    saveSettings();
   }
   const known = new Set(state.sessions.map(s => s.id));
   const added = data.sessions.map(cleanSession).filter(s => s && !known.has(s.id));
@@ -524,9 +605,19 @@ function setsText(sets) {
   return sets.map(s => `${s.kg === null ? '-' : fmtNum(s.kg)} kg × ${s.reps === null ? '-' : s.reps}`).join(', ');
 }
 
+// Zusammenfassung der Tendenzen, z. B. "3× ↑ · 1× → · 1× ↓" (neue Übungen zählen nicht).
+function trendSummary(trends) {
+  const n = dir => trends.filter(t => t.dir === dir).length;
+  return [['up', '↑'], ['same', '→'], ['down', '↓']].filter(([d]) => n(d)).map(([d, a]) => `${n(d)}× ${a}`).join(' · ');
+}
+
 function sessionDescription(s) {
-  const lines = [`${setsLabel(sessionSets(s))} · ${fmtDuration(new Date(s.end) - new Date(s.start))}`, ''];
-  for (const e of s.exercises) lines.push(`${e.name}: ${setsText(e.sets)}`);
+  const trends = sessionTrends(s);
+  const sum = trendSummary(trends);
+  const lines = [`${setsLabel(sessionSets(s))} · ${fmtDuration(new Date(s.end) - new Date(s.start))}`];
+  if (sum) lines.push(`Tendenz zur Vor-Einheit: ${sum}`);
+  lines.push('');
+  s.exercises.forEach((e, k) => lines.push(`${e.name} (${trendLabel(trends[k])}): ${setsText(e.sets)}`));
   return lines.join('\n');
 }
 
@@ -580,6 +671,29 @@ function exportSessionIcs(s) {
   exportIcs(`training-${dayKey(s.start)}-${s.workoutId || 'training'}.ics`, [s]);
 }
 
+// ---------- CSV-Export (Excel/Numbers) ----------
+// Ein Satz pro Zeile; Semikolon und Dezimalkomma wie in deutschem Excel, BOM für Umlaute.
+// Enthält alle Trainings, auch mit Übungen, die nicht mehr im Plan sind.
+function csvCell(v) {
+  const t = v === null || v === undefined ? '' : String(v);
+  return /[;"\r\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
+}
+
+function buildCsv() {
+  const rows = [['Datum', 'Uhrzeit', 'Trainingstag', 'Übung', 'Gerät', 'Satz', 'Gewicht (kg)', 'Wiederholungen', 'Volumen (kg)', 'Tendenz zur Vor-Einheit']];
+  for (const s of sortedSessions().reverse()) {
+    const trends = sessionTrends(s);
+    s.exercises.forEach((e, k) => e.sets.forEach((x, i) => rows.push([
+      fmtDate(s.start), fmtTime(s.start), s.name, e.name, e.equip, i + 1,
+      x.kg === null ? '' : fmtNum(x.kg),
+      x.reps === null ? '' : x.reps,
+      x.kg !== null && x.reps !== null ? fmtNum(x.kg * x.reps) : '',
+      trendLabel(trends[k]),
+    ])));
+  }
+  return '\uFEFF' + rows.map(r => r.map(csvCell).join(';')).join('\r\n') + '\r\n';
+}
+
 // ---------- Navigation ----------
 document.querySelectorAll('#nav button').forEach(b => {
   b.insertAdjacentHTML('afterbegin', icon(b.dataset.icon));
@@ -623,40 +737,11 @@ function exerciseLine(workout, ex) {
 }
 
 // ---------- Körperfigur mit trainierten Muskeln ----------
-// Welche Muskeln eine Übung trifft (Haupt- und mitarbeitende Muskeln), anhand von
-// Stichworten im Namen. Die erste passende Regel zählt, daher Spezielles zuerst.
-const MUSCLE_RULES = [
-  [/butterfly-reverse|reverse fly|face-?pull|vorgebeugt/, ['delt_rear', 'traps_mid', 'upperback'], ['traps_upper']],
-  [/schrägbankdrück/, ['chest_upper', 'delt_front'], ['chest_lower', 'triceps']],
-  [/bankdrück|brustpresse|liegestütz/, ['chest_upper', 'chest_lower'], ['delt_front', 'triceps']],
-  [/butterfly|fliegende/, ['chest_upper', 'chest_lower'], ['delt_front']],
-  [/seitheben/, ['delt_side'], ['traps_upper']],
-  [/schulterdrück|frontheben|military/, ['delt_front', 'delt_side'], ['triceps']],
-  [/latzieh|klimmz|pull-?down/, ['lats'], ['biceps', 'upperback', 'delt_rear']],
-  [/rudern.*breit|breit.*rudern/, ['upperback', 'traps_mid', 'delt_rear'], ['lats', 'biceps']],
-  [/rudern/, ['lats', 'traps_mid'], ['biceps', 'delt_rear', 'upperback']],
-  [/shrug/, ['traps_upper'], ['forearms']],
-  [/trizeps|triceps|dips/, ['triceps'], []],
-  [/hammer/, ['forearms', 'biceps'], []],
-  [/bizeps|curl(?!.*bein)/, ['biceps'], ['forearms']],
-  [/kreuzheben|deadlift/, ['hamstrings', 'glutes'], ['lowerback', 'forearms']],
-  [/hüftstreck|hip ?thrust|glute/, ['glutes'], ['hamstrings']],
-  [/hyperextension|rückenstreck/, ['lowerback'], ['glutes', 'hamstrings']],
-  [/beinbeug|leg ?curl/, ['hamstrings'], ['calves']],
-  [/wade|calf/, ['calves'], []],
-  [/beinstreck|leg ?extension/, ['quads'], []],
-  [/beinpresse|squat|kniebeug|ausfall/, ['quads', 'glutes'], ['adductors', 'hamstrings']],
-  [/adduktor/, ['adductors'], []],
-  [/beinheb|leg ?raise/, ['abs_lower', 'hipflex'], ['abs', 'obliques']],
-  [/crunch|bauch|sit-?up/, ['abs', 'abs_lower'], ['obliques']],
-  [/plank|unterarmstütz/, ['abs'], ['obliques', 'lowerback']],
-  [/oblique|russian|seitbeug/, ['obliques'], ['abs']],
-];
-
+// Zuordnung Übung → Muskeln: MUSCLE_RULES in coach.js.
 function workoutMuscles(workout) {
   const primary = new Set(), secondary = new Set();
   for (const ex of workout.exercises) {
-    const rule = MUSCLE_RULES.find(([re]) => re.test(ex.name.toLowerCase()));
+    const rule = muscleRule(ex.name);
     if (!rule) continue;
     rule[1].forEach(m => primary.add(m));
     rule[2].forEach(m => secondary.add(m));
@@ -738,11 +823,23 @@ function bodyFigures(muscles) {
 function workoutDuration(w) {
   const last = lastSessionOf(w.id);
   if (last) return fmtDuration(new Date(last.end) - new Date(last.start));
-  return fmtDuration(totalSets(w) * 3.5 * 60000);
+  return w.exercises.length ? fmtDuration(totalSets(w) * 3.5 * 60000) : '–';
 }
 
+// Kleines Symbol mit Empfehlung (nur wenn es eine gibt). attrs: data-Attribute zum Öffnen.
+function recChipHtml(rec, attrs) {
+  if (!rec) return '';
+  const tip = rec.label === 'Tipp';
+  const ico = tip ? 'info' : rec.type === 'down' ? 'trendDown' : 'trendUp';
+  const label = rec.label || { up: 'Steigern', reps: 'Steigern', down: 'Anpassen' }[rec.type];
+  return `<button class="rec rec-${rec.type}${tip ? ' tip' : ''}" ${attrs} aria-label="Empfehlung: ${esc(rec.title)}">${icon(ico)}<span>${label}: ${esc(rec.short)}</span></button>`;
+}
+
+let onAddSlide = false;
+
 function renderPlan() {
-  if (!validIndex(planIndex)) planIndex = 0;
+  if (!validIndex(planIndex)) planIndex = Math.max(0, Math.min(planIndex, plan.length - 1));
+  onAddSlide = false;
 
   const tabs = plan.map((w, i) => {
     const recent = doneRecently(w.id);
@@ -758,7 +855,10 @@ function renderPlan() {
     const date = last ? `<span class="card-date">${fmtDate(last.start)}</span>` : '';
     return `
       <section class="wcard${i === state.nextIndex ? ' next' : ''}">
-        <div class="card-top">${badge}${date}</div>
+        <div class="card-top">
+          ${badge}
+          <div class="card-top-r">${date}<button class="more" data-wmore="${i}" aria-label="Optionen für Trainingstag ${esc(w.name)}">${icon('more')}</button></div>
+        </div>
         <h2>${esc(w.name)}</h2>
         <div class="card-main">
           <div class="stat-col">
@@ -781,25 +881,49 @@ function renderPlan() {
               <button class="more" data-more="${i}:${j}" aria-label="Optionen für ${esc(ex.name)}">${icon('more')}</button>
             </div>
             <div class="ex-line">${exerciseLine(w, ex)}</div>
+            ${recChipHtml(recommendationFor(ex.name, ex.reps), `data-pinfo="${i}:${j}"`)}
           </div>`).join('') : '<p class="empty">Noch keine Übungen – füge oben welche hinzu.</p>'}
       </section>`;
   }).join('');
 
   app.innerHTML = `
     <div class="plan-head"><h1>Trainingsplan</h1><div class="tabs" id="tabs">${tabs}</div></div>
-    <div class="slider" id="slider">${cards}</div>
+    <div class="slider" id="slider">${cards}
+      <section class="wcard add-day">
+        <button class="add-day-btn" id="add-day">${icon('plus')}<span>Trainingstag hinzufügen</span></button>
+        <p class="muted">z. B. „Beine“, „Ganzkörper“ oder „Cardio“. Übungen fügst du danach hinzu.</p>
+      </section>
+    </div>
     <button class="btn float" id="start">Training starten</button>`;
 
   const slider = document.getElementById('slider');
   const tabRow = document.getElementById('tabs');
+  const startBtn = document.getElementById('start');
   const step = () => slider.firstElementChild.getBoundingClientRect().width + (parseFloat(getComputedStyle(slider).columnGap) || 0);
-  requestAnimationFrame(() => { slider.scrollLeft = planIndex * step(); });
+  const showTab = (i, smooth) => {
+    const t = tabRow.children[i];
+    if (t && tabRow.scrollWidth > tabRow.clientWidth) {
+      tabRow.scrollTo({ left: t.offsetLeft - tabRow.clientWidth / 2 + t.offsetWidth / 2, behavior: smooth ? 'smooth' : 'auto' });
+    }
+  };
+  requestAnimationFrame(() => {
+    slider.scrollLeft = planIndex * step();
+    showTab(planIndex, false);
+  });
 
   slider.addEventListener('scroll', () => {
-    const i = Math.min(plan.length - 1, Math.max(0, Math.round(slider.scrollLeft / step())));
-    if (i !== planIndex) {
+    const i = Math.min(plan.length, Math.max(0, Math.round(slider.scrollLeft / step())));
+    const add = i === plan.length;
+    if (add !== onAddSlide) {
+      onAddSlide = add;
+      startBtn.classList.toggle('hidden', add);
+    }
+    if (!add && i !== planIndex) {
       planIndex = i;
       [...tabRow.children].forEach((c, j) => c.classList.toggle('active', j === i));
+      showTab(i, true);
+    } else if (add) {
+      [...tabRow.children].forEach(c => c.classList.remove('active'));
     }
   }, { passive: true });
 
@@ -812,8 +936,14 @@ function renderPlan() {
     const [i, j] = b.dataset.more.split(':').map(Number);
     planExerciseMenu(i, j);
   }));
+  app.querySelectorAll('[data-pinfo]').forEach(b => b.addEventListener('click', () => {
+    const [i, j] = b.dataset.pinfo.split(':').map(Number);
+    openExerciseInfo(plan[i].exercises[j]);
+  }));
+  app.querySelectorAll('[data-wmore]').forEach(b => b.addEventListener('click', () => workoutDayMenu(+b.dataset.wmore)));
+  document.getElementById('add-day').addEventListener('click', () => dayForm());
 
-  document.getElementById('start').addEventListener('click', () => startWorkout(planIndex));
+  startBtn.addEventListener('click', () => startWorkout(planIndex));
 }
 
 function addToPlan(i) {
@@ -824,6 +954,7 @@ function addToPlan(i) {
     exclude: w.exercises.map(e => e.name),
     onSave: values => {
       w.exercises.push(cleanPlanExercise(values));
+      rememberExercise(values);
       savePlan();
       rerenderKeepScroll();
       toast(`„${values.name}“ hinzugefügt`);
@@ -835,6 +966,7 @@ function planExerciseMenu(i, j) {
   const w = plan[i];
   const ex = w.exercises[j];
   openSheet(ex.name, [
+    { label: 'Verlauf & Empfehlung', icon: 'chart', run: () => openExerciseInfo(ex) },
     {
       label: 'Bearbeiten', icon: 'edit', run: () => exerciseForm({
         title: 'Übung bearbeiten',
@@ -843,6 +975,7 @@ function planExerciseMenu(i, j) {
         exclude: w.exercises.filter((_, k) => k !== j).map(e => e.name),
         onSave: values => {
           w.exercises[j] = cleanPlanExercise(values);
+          rememberExercise(values);
           savePlan();
           rerenderKeepScroll();
         },
@@ -854,10 +987,11 @@ function planExerciseMenu(i, j) {
       label: 'Aus dem Plan entfernen', icon: 'trash', danger: true, run: async () => {
         const ok = await askConfirm({
           title: `„${ex.name}“ entfernen?`,
-          text: `Die Übung wird aus „${w.name}“ gelöscht. Bisherige Trainings bleiben erhalten.`,
+          text: `Die Übung wird aus „${w.name}“ gelöscht. Bisherige Trainings und Werte bleiben gespeichert – beim erneuten Hinzufügen sind sie wieder da.`,
           ok: 'Entfernen', danger: true,
         });
         if (!ok) return;
+        rememberExercise(ex);
         w.exercises.splice(j, 1);
         savePlan();
         rerenderKeepScroll();
@@ -867,22 +1001,118 @@ function planExerciseMenu(i, j) {
   ]);
 }
 
+// ---------- Trainingstage verwalten ----------
+// Name abfragen; ohne index wird ein neuer Trainingstag angelegt, sonst umbenannt.
+function dayForm(index) {
+  const editing = Number.isInteger(index);
+  const current = editing ? plan[index].name : '';
+  openModal(`
+    <h2 class="sheet-h">${editing ? 'Trainingstag umbenennen' : 'Neuer Trainingstag'}</h2>
+    <div class="form">
+      <label for="d-name">Name</label>
+      <input class="field" id="d-name" value="${esc(current)}" maxlength="30" placeholder="z. B. Ganzkörper" autocomplete="off" autocapitalize="sentences">
+      <div class="form-error" id="d-error"></div>
+      <button class="btn" id="d-save">${editing ? 'Speichern' : 'Anlegen'}</button>
+      <button class="btn secondary" id="d-cancel">Abbrechen</button>
+    </div>`);
+  const input = document.getElementById('d-name');
+  const save = () => {
+    const name = input.value.trim().replace(/\s+/g, ' ');
+    const err = !name ? 'Bitte einen Namen eingeben.'
+      : plan.some((w, k) => k !== index && w.name.toLowerCase() === name.toLowerCase()) ? 'Diesen Trainingstag gibt es schon.' : '';
+    if (err) {
+      document.getElementById('d-error').textContent = err;
+      return;
+    }
+    closeModal();
+    if (editing) {
+      plan[index].name = name;
+      toast('Umbenannt');
+    } else {
+      plan.push({ id: 'w-' + uid(), name, exercises: [] });
+      planIndex = plan.length - 1;
+      toast(`„${name}“ angelegt – füge jetzt Übungen hinzu`);
+    }
+    savePlan();
+    render();
+  };
+  document.getElementById('d-save').addEventListener('click', save);
+  document.getElementById('d-cancel').addEventListener('click', closeModal);
+  input.addEventListener('input', () => { document.getElementById('d-error').textContent = ''; });
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') save(); });
+  input.focus();
+}
+
+// Reihenfolge ändern / löschen, ohne dass "Nächstes Training" auf einen anderen Tag springt.
+function changePlanOrder(mutate) {
+  const nextId = plan[state.nextIndex] ? plan[state.nextIndex].id : null;
+  const result = mutate();
+  const found = plan.findIndex(w => w.id === nextId);
+  if (found >= 0) state.nextIndex = found;
+  else if (!validIndex(state.nextIndex)) state.nextIndex = 0;
+  savePlan();
+  save();
+  return result;
+}
+
+function workoutDayMenu(i) {
+  const w = plan[i];
+  openSheet(w.name, [
+    { label: 'Umbenennen', icon: 'edit', run: () => dayForm(i) },
+    {
+      label: 'Als nächstes Training festlegen', icon: 'star', disabled: i === state.nextIndex, run: () => {
+        state.nextIndex = i;
+        save();
+        render();
+        toast(`Nächstes Training: ${w.name}`);
+      },
+    },
+    { label: 'Nach links', icon: 'left', disabled: i === 0, run: () => { changePlanOrder(() => moveItem(plan, i, -1)); planIndex = i - 1; render(); } },
+    { label: 'Nach rechts', icon: 'right', disabled: i === plan.length - 1, run: () => { changePlanOrder(() => moveItem(plan, i, 1)); planIndex = i + 1; render(); } },
+    {
+      label: 'Trainingstag löschen', icon: 'trash', danger: true, disabled: plan.length === 1, run: async () => {
+        const ok = await askConfirm({
+          title: `„${w.name}“ löschen?`,
+          text: `Der Trainingstag und seine ${w.exercises.length} ${w.exercises.length === 1 ? 'Übung' : 'Übungen'} werden aus dem Plan entfernt. Bisherige Trainings bleiben im Kalender, die Übungen in den Vorschlägen.`,
+          ok: 'Löschen', danger: true,
+        });
+        if (!ok) return;
+        w.exercises.forEach(rememberExercise);
+        const wasNext = i === state.nextIndex;
+        changePlanOrder(() => plan.splice(i, 1));
+        if (wasNext) state.nextIndex = i < plan.length ? i : 0;
+        save();
+        planIndex = Math.min(i, plan.length - 1);
+        render();
+        toast(`„${w.name}“ gelöscht`);
+      },
+    },
+  ]);
+}
+
 // ---------- Ansicht: Training läuft ----------
-// Baut eine Übung für das laufende Training; Vorschlagswerte vom letzten Mal bzw. aus dem Plan.
+// Baut eine Übung für das laufende Training. Grau vorbelegt werden nur Werte, die du
+// schon einmal gemacht hast (letzte Einheit dieser Übung); neue Übungen bleiben leer.
 function activeExercise(workoutId, ex) {
   const last = lastSetsFor(workoutId, ex.name);
-  const planKg = num(String(ex.kg).split('-').pop());
-  const planReps = num(String(ex.reps).split('-')[0]);
   const sets = [];
   for (let n = 0; n < ex.sets; n++) {
     const prev = last ? last[Math.min(n, last.length - 1)] : null;
     sets.push({
       kg: '', reps: '', done: false,
-      phKg: prev && prev.kg !== null ? fmtNum(prev.kg) : (planKg !== null ? fmtNum(planKg) : ''),
-      phReps: prev && prev.reps !== null ? String(prev.reps) : (planReps !== null ? String(planReps) : ''),
+      phKg: prev && prev.kg !== null ? fmtNum(prev.kg) : '',
+      phReps: prev && prev.reps !== null ? String(prev.reps) : '',
     });
   }
-  return { name: ex.name, equip: ex.equip, target: `${ex.sets} × ${ex.reps} Wdh.`, sets };
+  const kgGoal = ex.kg && ex.kg !== '-' ? ` · ${ex.kg} kg` : '';
+  return { name: ex.name, equip: ex.equip, reps: ex.reps, kgPlan: ex.kg, target: `${ex.sets} × ${ex.reps} Wdh.${kgGoal}`, sets };
+}
+
+// Zielbereich der Übung (auch für Trainings, die vor diesem Update begonnen wurden).
+function activeReps(e) {
+  if (e.reps) return e.reps;
+  const m = String(e.target || '').match(/×\s*([\d-]+)/);
+  return m ? m[1] : '';
 }
 
 function startWorkout(i) {
@@ -905,12 +1135,28 @@ function workoutProgress(a) {
   return { done, total };
 }
 
+function exComplete(e) {
+  return e.sets.length > 0 && e.sets.every(s => s.done);
+}
+
+// Feld für kg/Wdh.: eigener Wert (weiß), Wert vom letzten Mal (grau) oder leer.
+function cellHtml(s, f) {
+  const unit = f === 'kg' ? 'kg' : 'Wdh.';
+  const v = s[f];
+  const ph = f === 'kg' ? s.phKg : s.phReps;
+  if (v !== '' && v !== null && v !== undefined) {
+    return `<button class="cell" data-act="pick" data-f="${f}" aria-label="${unit}: ${esc(v)}">${esc(v)}</button>`;
+  }
+  if (ph) return `<button class="cell ph" data-act="pick" data-f="${f}" aria-label="${unit}: letztes Mal ${esc(ph)}">${esc(ph)}</button>`;
+  return `<button class="cell empty" data-act="pick" data-f="${f}" aria-label="${unit} eintragen">${unit}</button>`;
+}
+
 function setRowHtml(ei, si, s) {
   return `
     <div class="set-row ${s.done ? 'done' : ''}" data-ei="${ei}" data-si="${si}">
       <div class="num">${si + 1}</div>
-      <input inputmode="decimal" data-f="kg" placeholder="${esc(s.phKg || 'kg')}" value="${esc(s.kg)}" autocomplete="off">
-      <input inputmode="numeric" data-f="reps" placeholder="${esc(s.phReps || 'Wdh.')}" value="${esc(s.reps)}" autocomplete="off">
+      ${cellHtml(s, 'kg')}
+      ${cellHtml(s, 'reps')}
       <button class="check" data-act="check" aria-label="Satz ${si + 1} abhaken">${icon('check')}</button>
     </div>`;
 }
@@ -918,6 +1164,7 @@ function setRowHtml(ei, si, s) {
 function renderWorkout() {
   const a = state.active;
   const p = workoutProgress(a);
+  const allDone = p.total > 0 && p.done === p.total;
   app.innerHTML = `
     <div class="wo-head">
       <div>
@@ -928,36 +1175,34 @@ function renderWorkout() {
     </div>
     <div class="progress"><div style="width:${p.total ? (p.done / p.total) * 100 : 0}%"></div></div>
     ${a.exercises.length ? '' : '<p class="empty">Keine Übungen – füge unten welche hinzu.</p>'}
-    ${a.exercises.map((e, ei) => `
-      <div class="ex ${e.sets.length && e.sets.every(s => s.done) ? 'complete' : ''}" data-card="${ei}">
+    ${a.exercises.map((e, ei) => {
+      const done = exComplete(e);
+      return `
+      <div class="ex ${done ? 'complete' : ''}" data-card="${ei}">
         <div class="ex-head">
           <div>
-            <div class="ex-name">${esc(e.name)}</div>
+            <div class="ex-name">${esc(e.name)}${done ? `<span class="done-badge">${icon('check')}geschafft</span>` : ''}</div>
             <div class="ex-equip">${e.equip ? esc(e.equip) + ' · ' : ''}Ziel ${esc(e.target)}</div>
           </div>
           <button class="more" data-act="menu" data-ei="${ei}" aria-label="Optionen für ${esc(e.name)}">${icon('more')}</button>
         </div>
+        ${recChipHtml(recommendationFor(e.name, activeReps(e)), `data-act="info" data-ei="${ei}"`)}
         ${e.sets.length ? '<div class="set-row head"><div>Satz</div><div>kg</div><div>Wdh.</div><div></div></div>' : ''}
         ${e.sets.map((s, si) => setRowHtml(ei, si, s)).join('')}
         <div class="ex-actions">
           <button class="pill" data-act="add" data-ei="${ei}">${icon('plus')}Satz</button>
           ${e.sets.length ? `<button class="pill red" data-act="remove" data-ei="${ei}">${icon('minus')}Satz</button>` : ''}
         </div>
-      </div>`).join('')}
+      </div>`;
+    }).join('')}
     <button class="add-card" id="add-ex">${icon('plus')}Übung hinzufügen</button>
     <button class="btn secondary" id="cancel" style="margin-top:22px">Training abbrechen</button>
-    <button class="btn float" id="finish">Training beenden</button>`;
+    <button class="btn float ${allDone ? 'ready' : ''}" id="finish">Training beenden</button>`;
 
   timerHandle = setInterval(() => {
     const t = document.getElementById('timer');
     if (t && state.active) t.textContent = fmtClock(Date.now() - new Date(state.active.start));
   }, 1000);
-
-  app.querySelectorAll('.set-row input').forEach(inp => inp.addEventListener('input', () => {
-    const row = inp.closest('.set-row');
-    state.active.exercises[+row.dataset.ei].sets[+row.dataset.si][inp.dataset.f] = inp.value;
-    save();
-  }));
 
   app.querySelectorAll('[data-act]').forEach(b => b.addEventListener('click', () => {
     const act = b.dataset.act;
@@ -965,13 +1210,19 @@ function renderWorkout() {
     const ei = row ? +row.dataset.ei : +b.dataset.ei;
     const ex = state.active.exercises[ei];
     if (act === 'menu') return workoutExerciseMenu(ei);
+    if (act === 'info') return openExerciseInfo({ name: ex.name, equip: ex.equip, reps: activeReps(ex) }, ei);
+    if (act === 'pick') return openSetPicker(ei, +row.dataset.si, b.dataset.f);
+    const before = exComplete(ex);
     if (act === 'check') {
-      const s = ex.sets[+row.dataset.si];
-      s.done = !s.done;
-      if (s.done) {
-        if (s.kg === '') s.kg = s.phKg;
-        if (s.reps === '') s.reps = s.phReps;
-        state.active.lastAt = new Date().toISOString();
+      const si = +row.dataset.si;
+      const s = ex.sets[si];
+      if (s.done) s.done = false;
+      else {
+        // Fehlt ein Wert (und gibt es keinen vom letzten Mal), erst das Zahlenrad öffnen,
+        // damit keine leeren Sätze im Verlauf landen.
+        const missing = !(s.kg || s.phKg) ? 'kg' : !(s.reps || s.phReps) ? 'reps' : null;
+        if (missing) return openSetPicker(ei, si, missing);
+        markDone(s);
       }
     } else if (act === 'add') {
       const prev = ex.sets[ex.sets.length - 1];
@@ -984,7 +1235,7 @@ function renderWorkout() {
       ex.sets.pop();
     }
     save();
-    rerenderKeepScroll();
+    afterSetChange(ei, before);
   }));
 
   document.getElementById('add-ex').addEventListener('click', addToWorkout);
@@ -1001,13 +1252,229 @@ function renderWorkout() {
   document.getElementById('finish').addEventListener('click', finishWorkout);
 }
 
-// Bei offener Tastatur den schwebenden "Beenden"-Button ausblenden.
-app.addEventListener('focusin', e => {
-  if (state.active && e.target.matches('input')) document.body.classList.add('typing');
-});
-app.addEventListener('focusout', e => {
-  if (!(e.relatedTarget && e.relatedTarget.matches && e.relatedTarget.matches('input'))) document.body.classList.remove('typing');
-});
+// Satz abhaken; leere Felder übernehmen die grauen Werte vom letzten Mal.
+function markDone(s) {
+  if (s.kg === '') s.kg = s.phKg;
+  if (s.reps === '') s.reps = s.phReps;
+  s.done = true;
+  state.active.lastAt = new Date().toISOString();
+}
+
+// Neu zeichnen und feiern, wenn eine Übung dadurch komplett wurde.
+function afterSetChange(ei, wasComplete) {
+  rerenderKeepScroll();
+  const ex = state.active && state.active.exercises[ei];
+  if (ex && !wasComplete && exComplete(ex)) celebrate(ei);
+}
+
+// Kleiner Effekt, wenn alle Sätze einer Übung abgehakt sind.
+function celebrate(ei) {
+  const card = app.querySelector(`[data-card="${ei}"]`);
+  if (!card) return;
+  card.classList.add('celebrate');
+  const burst = document.createElement('div');
+  burst.className = 'burst';
+  burst.setAttribute('aria-hidden', 'true');
+  const colors = ['var(--green)', 'var(--accent)', '#fff'];
+  burst.innerHTML = Array.from({ length: 16 }, (_, k) => {
+    const ang = (k / 16) * Math.PI * 2;
+    const dist = 34 + (k % 3) * 16;
+    return `<i style="--dx:${(Math.cos(ang) * dist).toFixed(1)}px;--dy:${(Math.sin(ang) * dist).toFixed(1)}px;--c:${colors[k % 3]}"></i>`;
+  }).join('');
+  const badge = card.querySelector('.done-badge');
+  (badge || card).appendChild(burst);
+  setTimeout(() => { card.classList.remove('celebrate'); burst.remove(); }, 1200);
+  if (navigator.vibrate) navigator.vibrate([18, 40, 18]);
+  const p = workoutProgress(state.active);
+  if (p.total && p.done === p.total) toast('Alle Sätze geschafft – stark!');
+}
+
+// ---------- Zahlenrad für kg und Wiederholungen ----------
+const WHEEL_ITEM = 44;
+
+function kgOptions(extra) {
+  const S = settings.weightStep;
+  const set = new Set();
+  for (let i = 0; i * S <= 300 + 1e-9; i++) set.add(Math.round(i * S * 100) / 100);
+  extra.forEach(v => { if (v !== null && v >= 0 && v <= 1000) set.add(Math.round(v * 100) / 100); });
+  return [...set].sort((x, y) => x - y);
+}
+
+const REPS_OPTIONS = Array.from({ length: 61 }, (_, i) => i);
+
+// Scrollbares Rad mit Einrasten; meldet den Wert in der Mitte.
+function mountWheel(el, values, value, fmt, onChange) {
+  let idx = 0;
+  values.forEach((v, i) => { if (Math.abs(v - value) < Math.abs(values[idx] - value)) idx = i; });
+  el.innerHTML = `<div class="wheel-band"></div>
+    <div class="wheel-scroll" tabindex="0" role="listbox">${values.map((v, i) => `<div class="wheel-item" data-i="${i}" role="option">${fmt(v)}</div>`).join('')}</div>`;
+  const sc = el.querySelector('.wheel-scroll');
+  const items = sc.children;
+  const mark = i => {
+    items[idx].classList.remove('sel');
+    idx = i;
+    items[idx].classList.add('sel');
+  };
+  items[idx].classList.add('sel');
+  sc.scrollTop = idx * WHEEL_ITEM;
+  let raf = 0;
+  sc.addEventListener('scroll', () => {
+    cancelAnimationFrame(raf);
+    raf = requestAnimationFrame(() => {
+      const i = Math.min(values.length - 1, Math.max(0, Math.round(sc.scrollTop / WHEEL_ITEM)));
+      if (i !== idx) {
+        mark(i);
+        onChange(values[i]);
+      }
+    });
+  }, { passive: true });
+  sc.addEventListener('click', e => {
+    const it = e.target.closest('.wheel-item');
+    if (it) sc.scrollTo({ top: +it.dataset.i * WHEEL_ITEM, behavior: 'smooth' });
+  });
+  sc.addEventListener('keydown', e => {
+    if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+    e.preventDefault();
+    const i = Math.min(values.length - 1, Math.max(0, idx + (e.key === 'ArrowDown' ? 1 : -1)));
+    sc.scrollTop = i * WHEEL_ITEM;
+  });
+}
+
+// Startwert: eigener Wert → grauer Wert → Wert des Satzes davor → Plan → Standard.
+function pickerStart(ex, si, f) {
+  const s = ex.sets[si];
+  const own = num(f === 'kg' ? s.kg : s.reps);
+  if (own !== null) return own;
+  const ph = num(f === 'kg' ? s.phKg : s.phReps);
+  if (ph !== null) return ph;
+  for (let k = si - 1; k >= 0; k--) {
+    const p = ex.sets[k];
+    const v = num(f === 'kg' ? (p.kg || p.phKg) : (p.reps || p.phReps));
+    if (v !== null) return v;
+  }
+  if (f === 'kg') {
+    const planKg = num(String(ex.kgPlan || '').split('-').pop());
+    if (planKg !== null) return planKg;
+    return /körpergewicht/i.test(ex.equip || '') ? 0 : 20;
+  }
+  const range = parseRepRange(activeReps(ex));
+  return range ? range.lo : 10;
+}
+
+// Öffnet das Zahlenrad für einen Satz. Nach dem Gewicht geht es direkt zu den Wiederholungen.
+function openSetPicker(ei, si, field) {
+  const ex = state.active.exercises[ei];
+  const s = ex.sets[si];
+  const before = exComplete(ex);
+  const vals = { kg: pickerStart(ex, si, 'kg'), reps: pickerStart(ex, si, 'reps') };
+  let step = field;
+  let typing = false;
+  let bad = false; // eingetippter Text ist keine Zahl
+  const last = historyFor(ex.name)[0];
+  const lastSet = last ? last.sets[Math.min(si, last.sets.length - 1)] : null;
+  const hint = lastSet
+    ? `Letztes Mal (${fmtDate(last.start)}): ${lastSet.kg === null ? '–' : fmtNum(lastSet.kg)} kg × ${lastSet.reps === null ? '–' : lastSet.reps}`
+    : 'Noch keine Werte von früher – trag deine ersten ein.';
+
+  const commit = f => {
+    if (f === 'kg') s.kg = fmtNum(vals.kg);
+    else s.reps = String(Math.round(vals.reps));
+    save();
+  };
+
+  const paint = () => {
+    modalBox.innerHTML = `
+      <div class="sheet-title">${esc(ex.name)} · Satz ${si + 1}</div>
+      <div class="pk-tabs">
+        <button data-step="kg" class="${step === 'kg' ? 'on' : ''}"><small>Gewicht</small><b id="pk-v-kg">${fmtNum(vals.kg)} kg</b></button>
+        <button data-step="reps" class="${step === 'reps' ? 'on' : ''}"><small>Wiederholungen</small><b id="pk-v-reps">${vals.reps}</b></button>
+      </div>
+      ${typing
+        ? `<input class="field pk-input" id="pk-input" inputmode="${step === 'kg' ? 'decimal' : 'numeric'}" value="${step === 'kg' ? fmtNum(vals.kg) : vals.reps}" autocomplete="off" aria-label="${step === 'kg' ? 'Gewicht in kg' : 'Wiederholungen'}">`
+        : '<div class="wheel" id="pk-wheel"></div>'}
+      <div class="pk-meta">
+        <span class="muted">${esc(hint)}</span>
+        <button class="link" id="pk-mode">${typing ? 'Zahlenrad' : 'Eintippen'}</button>
+      </div>
+      <div class="form-error" id="pk-error"></div>
+      ${step === 'kg'
+        ? `<button class="btn" id="pk-next">Weiter zu Wiederholungen${icon('right')}</button>`
+        : `<button class="btn" id="pk-done">${icon('check')}${s.done ? 'Übernehmen' : 'Satz abhaken'}</button>
+           ${s.done ? '' : '<button class="btn secondary" id="pk-save">Nur eintragen</button>'}`}`;
+
+    if (typing) {
+      const inp = document.getElementById('pk-input');
+      bad = false;
+      inp.addEventListener('input', () => {
+        const v = num(inp.value);
+        bad = v === null;
+        document.getElementById('pk-error').textContent = '';
+        if (v !== null) {
+          vals[step] = v;
+          document.getElementById(`pk-v-${step}`).textContent = step === 'kg' ? `${fmtNum(v)} kg` : v;
+        }
+      });
+      inp.addEventListener('keydown', e => {
+        if (e.key === 'Enter') (document.getElementById('pk-next') || document.getElementById('pk-done')).click();
+      });
+      inp.focus();
+      inp.select();
+    } else {
+      const values = step === 'kg' ? kgOptions([vals.kg]) : REPS_OPTIONS;
+      mountWheel(document.getElementById('pk-wheel'), values, vals[step],
+        v => (step === 'kg' ? fmtNum(v) : String(v)),
+        v => {
+          vals[step] = v;
+          document.getElementById(`pk-v-${step}`).textContent = step === 'kg' ? `${fmtNum(v)} kg` : v;
+        });
+    }
+
+    const valid = () => {
+      const v = vals[step];
+      const ok = !(typing && bad) && (step === 'kg' ? v >= 0 && v <= 1000 : Number.isInteger(v) && v >= 0 && v <= 200);
+      if (!ok) document.getElementById('pk-error').textContent = step === 'kg' ? 'Bitte ein Gewicht zwischen 0 und 1000 kg.' : 'Bitte eine ganze Zahl zwischen 0 und 200.';
+      return ok;
+    };
+    modalBox.querySelectorAll('[data-step]').forEach(b => b.addEventListener('click', () => {
+      if (b.dataset.step === step || !valid()) return;
+      commit(step);
+      step = b.dataset.step;
+      paint();
+    }));
+    document.getElementById('pk-mode').addEventListener('click', () => { typing = !typing; paint(); });
+    const next = document.getElementById('pk-next');
+    if (next) next.addEventListener('click', () => {
+      if (!valid()) return;
+      commit('kg');
+      step = 'reps';
+      paint();
+    });
+    const doneBtn = document.getElementById('pk-done');
+    if (doneBtn) doneBtn.addEventListener('click', () => {
+      if (!valid()) return;
+      commit('reps');
+      if (!(s.kg || s.phKg)) {
+        // Gewicht fehlt noch → erst dorthin (bei Körpergewicht einfach 0 wählen).
+        step = 'kg';
+        paint();
+        document.getElementById('pk-error').textContent = 'Bitte noch das Gewicht wählen (Körpergewicht: 0).';
+        return;
+      }
+      if (!s.done) markDone(s);
+      save();
+      closeModal();
+    });
+    const saveBtn = document.getElementById('pk-save');
+    if (saveBtn) saveBtn.addEventListener('click', () => {
+      if (!valid()) return;
+      commit('reps');
+      closeModal();
+    });
+  };
+
+  openModal('', () => afterSetChange(ei, before));
+  paint();
+}
 
 function addToWorkout() {
   const a = state.active;
@@ -1019,6 +1486,7 @@ function addToWorkout() {
     planOption: pi >= 0 ? plan[pi].name : null,
     onSave: (values, toPlan) => {
       a.exercises.push(activeExercise(a.workoutId, values));
+      rememberExercise(values);
       save();
       if (toPlan && pi >= 0 && !plan[pi].exercises.some(e => e.name.toLowerCase() === values.name.toLowerCase())) {
         plan[pi].exercises.push(cleanPlanExercise(values));
@@ -1036,6 +1504,7 @@ function workoutExerciseMenu(ei) {
   const list = state.active.exercises;
   const ex = list[ei];
   openSheet(ex.name, [
+    { label: 'Verlauf & Empfehlung', icon: 'chart', run: () => openExerciseInfo({ name: ex.name, equip: ex.equip, reps: activeReps(ex) }, ei) },
     { label: 'Nach oben', icon: 'up', disabled: ei === 0, run: () => { moveItem(list, ei, -1); save(); rerenderKeepScroll(); } },
     { label: 'Nach unten', icon: 'down', disabled: ei === list.length - 1, run: () => { moveItem(list, ei, 1); save(); rerenderKeepScroll(); } },
     {
@@ -1056,6 +1525,51 @@ function workoutExerciseMenu(ei) {
       },
     },
   ]);
+}
+
+// ---------- Verlauf & Empfehlung einer Übung ----------
+// ex: { name, equip, reps }; ei: Index im laufenden Training (dann lässt sich die Empfehlung übernehmen).
+function openExerciseInfo(ex, ei) {
+  const history = historyFor(ex.name);
+  const rec = recommendationFor(ex.name, ex.reps);
+  const tip = rec && rec.label === 'Tipp';
+  const canApply = rec && !tip && Number.isInteger(ei) && state.active && state.active.exercises[ei]
+    && state.active.exercises[ei].sets.some(s => !s.done);
+  const recBox = rec
+    ? `<div class="rec-box rec-${rec.type}${tip ? ' tip' : ''}">
+        <div class="rec-title">${icon(tip ? 'info' : rec.type === 'down' ? 'trendDown' : 'trendUp')}${esc(rec.title)}</div>
+        <p>${esc(rec.text)}</p>
+        ${canApply ? `<button class="btn small" id="i-apply">Als Vorgabe übernehmen</button>` : ''}
+      </div>
+      <p class="rec-src">${esc(REC_SOURCE)}</p>`
+    : `<div class="rec-box neutral"><p>${esc(history.length
+        ? (holdHint({ history, reps: ex.reps }) || 'Weiter so – für eine Empfehlung fehlt noch ein Zielbereich (Wdh.) im Plan.')
+        : 'Noch keine Daten – nach deinem ersten Training mit dieser Übung gibt es hier Empfehlungen.')}</p></div>`;
+  const rows = history.slice(0, 10).map((h, k) => {
+    const t = compareSets(h.sets, history[k + 1] ? history[k + 1].sets : null);
+    return `<li><div class="hist-top"><span>${fmtDate(h.start)}</span><span class="trend ${t.dir}">${esc(trendLabel(t))}</span></div>
+      <div class="hist-sets">${esc(setsText(h.sets))}</div></li>`;
+  }).join('');
+  openModal(`
+    <div class="sheet-title">Verlauf & Empfehlung</div>
+    <h2 class="sheet-h">${esc(ex.name)}</h2>
+    ${ex.equip ? `<p class="muted small" style="margin:-4px 0 12px">${esc(ex.equip)}${ex.reps ? ` · Ziel ${esc(ex.reps)} Wdh.` : ''}</p>` : ''}
+    ${recBox}
+    ${history.length ? `<h3 class="list-h">Letzte Einheiten</h3><ul class="hist">${rows}</ul>` : ''}
+    <button class="btn secondary" id="i-close" style="margin-top:14px">Schließen</button>`);
+  document.getElementById('i-close').addEventListener('click', closeModal);
+  const apply = document.getElementById('i-apply');
+  if (apply) apply.addEventListener('click', () => {
+    for (const s of state.active.exercises[ei].sets) {
+      if (s.done) continue;
+      if (rec.type !== 'reps') s.phKg = fmtNum(rec.kg);
+      s.phReps = String(rec.reps);
+    }
+    save();
+    closeModal();
+    rerenderKeepScroll();
+    toast('Vorgabe übernommen – grau in den Feldern');
+  });
 }
 
 async function finishWorkout() {
@@ -1100,7 +1614,8 @@ async function finishWorkout() {
   };
   state.sessions.push(session);
   const idx = plan.findIndex(w => w.id === a.workoutId);
-  state.nextIndex = (idx + 1) % plan.length;
+  if (idx >= 0) state.nextIndex = (idx + 1) % plan.length;
+  if (!validIndex(state.nextIndex)) state.nextIndex = 0;
   planIndex = state.nextIndex;
   state.active = null;
   save();
@@ -1111,10 +1626,13 @@ async function finishWorkout() {
   render();
   window.scrollTo(0, 0);
 
+  const trends = sessionTrends(session);
+  const sum = trendSummary(trends);
   openModal(`
     <div class="big-check">${icon('check')}</div>
     <h2 class="sheet-h" style="text-align:center">Training gespeichert!</h2>
     <p class="sheet-text" style="text-align:center">${esc(session.name)} · ${fmtDuration(new Date(session.end) - new Date(session.start))} · ${setsLabel(sessionSets(session))}<br>
+    ${sum ? `Im Vergleich zum letzten Mal: <b>${esc(sum)}</b><br>` : ''}
     Nächstes Training: <b>${esc(plan[state.nextIndex].name)}</b></p>
     <button class="btn" id="m-close">Fertig</button>
     <button class="btn secondary" id="m-ics">${icon('calendar')}In Handy-Kalender eintragen</button>`);
@@ -1125,17 +1643,31 @@ async function finishWorkout() {
 // ---------- Ansicht: Kalender ----------
 const MONTHS = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
 
+function trendSumHtml(trends) {
+  const n = dir => trends.filter(t => t.dir === dir).length;
+  const parts = [['up', '↑', 'gesteigert'], ['same', '→', 'gleich'], ['down', '↓', 'weniger']]
+    .filter(([d]) => n(d))
+    .map(([d, a, label]) => `<span class="trend ${d}" title="${label}">${a} ${n(d)}</span>`);
+  return parts.length ? `<div class="trend-sum">${parts.join('')}<span class="muted">zur Vor-Einheit</span></div>` : '';
+}
+
 function sessionCardHtml(s) {
+  const trends = sessionTrends(s);
   return `
     <div class="session">
       <div class="session-title">${esc(s.name)}</div>
       <div class="muted small" style="margin-top:2px">
         ${fmtDate(s.start)} · ${fmtTime(s.start)}–${fmtTime(s.end)} · ${fmtDuration(new Date(s.end) - new Date(s.start))} · ${setsLabel(sessionSets(s))}
       </div>
-      <ul>${s.exercises.map(e => `<li><b>${esc(e.name)}</b>: ${esc(setsText(e.sets))}</li>`).join('')}</ul>
+      ${trendSumHtml(trends)}
+      <ul class="ex-list">${s.exercises.map((e, k) => `
+        <li>
+          <div class="li-head"><b>${esc(e.name)}</b><span class="trend ${trends[k].dir}">${esc(trendLabel(trends[k]))}</span></div>
+          <div class="li-sets">${esc(setsText(e.sets))}</div>
+        </li>`).join('')}</ul>
       <div class="btn-row">
         <button class="btn small secondary" data-ics="${esc(s.id)}">${icon('calendar')}In Handy-Kalender</button>
-        <button class="btn small danger" data-del="${esc(s.id)}">${icon('trash')}Löschen</button>
+        <button class="btn small danger icon-only" data-del="${esc(s.id)}" aria-label="Training löschen">${icon('trash')}</button>
       </div>
     </div>`;
 }
@@ -1186,7 +1718,8 @@ function renderCalendar() {
     <div class="cal-grid">${cells}</div>
     <div class="month-sum">${monthCount} ${monthCount === 1 ? 'Training' : 'Trainings'} in diesem Monat · ${state.sessions.length} insgesamt</div>
     <h3 class="list-h">${heading}</h3>
-    ${list.length ? list.map(sessionCardHtml).join('') : `<p class="muted">${empty}</p>`}`;
+    ${list.length ? list.map(sessionCardHtml).join('') : `<p class="muted">${empty}</p>`}
+    ${list.length ? '<p class="legend"><span class="trend up">↑</span> mehr Gewicht oder Wdh. · <span class="trend same">→</span> gleich · <span class="trend down">↓</span> weniger – jeweils im Vergleich zur letzten Einheit derselben Übung</p>' : ''}`;
 
   document.getElementById('prev').addEventListener('click', () => { calMonth = new Date(y, m - 1, 1); render(); });
   document.getElementById('next').addEventListener('click', () => { calMonth = new Date(y, m + 1, 1); render(); });
@@ -1206,6 +1739,7 @@ function renderCalendar() {
 
 // ---------- Ansicht: Daten ----------
 function renderData() {
+  const n = state.sessions.length;
   app.innerHTML = `
     <h1>Daten</h1>
     <div class="panel">
@@ -1214,20 +1748,26 @@ function renderData() {
       <select id="next-sel">${plan.map((w, i) => `<option value="${i}" ${i === state.nextIndex ? 'selected' : ''}>${i + 1}. ${esc(w.name)}</option>`).join('')}</select>
     </div>
     <div class="panel">
-      <h3>Kalender-Datei (.ics)</h3>
-      <p>${state.sessions.length === 1 ? 'Dein Training' : `Alle ${state.sessions.length} Trainings`} als Datei exportieren, z. B. für den Apple- oder Google-Kalender.</p>
-      <button class="btn secondary" id="ics-all" ${state.sessions.length ? '' : 'disabled'}>${icon('calendar')}Kalender-Datei exportieren</button>
+      <h3>Zahlenrad</h3>
+      <p>In welchen Schritten das Gewicht im Zahlenrad angeboten wird. Auch die Gewichtsempfehlungen richten sich danach.</p>
+      <div class="equip-chips" id="step-sel">${WEIGHT_STEPS.map(v => `<button data-step="${v}" class="${v === settings.weightStep ? 'on' : ''}">${fmtNum(v)} kg</button>`).join('')}</div>
+    </div>
+    <div class="panel">
+      <h3>Trainingsdaten exportieren</h3>
+      <p>${n === 1 ? 'Dein Training' : `Alle ${n} Trainings`} mit allen Sätzen – auch von Übungen, die nicht mehr im Plan sind.</p>
+      <button class="btn secondary" id="csv" ${n ? '' : 'disabled'}>${icon('table')}Als CSV (Excel, Numbers)</button>
+      <button class="btn secondary" id="ics-all" ${n ? '' : 'disabled'}>${icon('calendar')}Als Kalender-Datei (.ics)</button>
     </div>
     <div class="panel">
       <h3>Backup</h3>
-      <p>Trainings und Plan liegen nur auf diesem Gerät. Mit einem Backup kannst du sie sichern oder auf ein neues Handy übertragen.</p>
+      <p>Trainings, Plan und Übungen liegen nur auf diesem Gerät. Mit einem Backup kannst du sie sichern oder auf ein neues Handy übertragen.</p>
       <button class="btn secondary" id="export">${icon('download')}Backup speichern</button>
       <button class="btn secondary" id="import">${icon('upload')}Backup laden</button>
       <input type="file" id="import-file" accept="application/json,.json" class="hidden">
     </div>
     <div class="panel">
       <h3>Trainingsplan</h3>
-      <p>${planIsDefault() ? 'Du nutzt den Original-Plan.' : 'Du hast den Plan angepasst. Hier kannst du ihn auf das Original zurücksetzen.'}</p>
+      <p>${planIsDefault() ? 'Du nutzt den Original-Plan.' : 'Du hast den Plan angepasst. Hier kannst du Trainingstage und Übungen auf das Original zurücksetzen.'}</p>
       <button class="btn secondary" id="plan-reset" ${planIsDefault() ? 'disabled' : ''}>${icon('reset')}Plan zurücksetzen</button>
     </div>
     <div class="panel">
@@ -1250,6 +1790,15 @@ function renderData() {
     save();
     toast(`Nächstes Training: ${plan[state.nextIndex].name}`);
   });
+  app.querySelectorAll('#step-sel [data-step]').forEach(b => b.addEventListener('click', () => {
+    settings.weightStep = +b.dataset.step;
+    saveSettings();
+    app.querySelectorAll('#step-sel [data-step]').forEach(x => x.classList.toggle('on', x === b));
+    toast(`Zahlenrad: ${fmtNum(settings.weightStep)}-kg-Schritte`);
+  }));
+  document.getElementById('csv').addEventListener('click', () => {
+    downloadFile(`gym-trainingsdaten-${dayKey(new Date())}.csv`, buildCsv(), 'text/csv;charset=utf-8');
+  });
   document.getElementById('ics-all').addEventListener('click', () => {
     exportIcs('gym-trainings.ics', sortedSessions().reverse());
   });
@@ -1271,11 +1820,14 @@ function renderData() {
     }
   });
   document.getElementById('plan-reset').addEventListener('click', async () => {
-    const ok = await askConfirm({ title: 'Plan zurücksetzen?', text: 'Hinzugefügte, geänderte und entfernte Übungen werden auf den Original-Plan zurückgesetzt. Deine Trainings bleiben erhalten.', ok: 'Zurücksetzen', danger: true });
+    const ok = await askConfirm({ title: 'Plan zurücksetzen?', text: 'Trainingstage und Übungen werden auf den Original-Plan zurückgesetzt. Deine Trainings und gespeicherten Übungen bleiben erhalten.', ok: 'Zurücksetzen', danger: true });
     if (!ok) return;
+    plan.forEach(w => w.exercises.forEach(rememberExercise));
     plan = defaultPlan();
     savePlan();
     if (!validIndex(state.nextIndex)) state.nextIndex = 0;
+    save();
+    planIndex = state.nextIndex;
     render();
     toast('Plan zurückgesetzt');
   });

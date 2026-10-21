@@ -1,11 +1,12 @@
 // Offline-Cache. Bei Änderungen an der App die Versionsnummer erhöhen.
-const CACHE = 'gym-tracker-v9';
+const CACHE = 'gym-tracker-v10';
 const ICS_CACHE = 'gym-ics'; // von app.js befüllt, siehe openIcsOnIos()
 const FILES = [
   './',
   'index.html',
   'style.css',
   'plan.js',
+  'coach.js',
   'app.js',
   'manifest.webmanifest',
   'icons/icon-192.png',
